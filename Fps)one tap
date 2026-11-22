@@ -1,0 +1,1083 @@
+--[[darkmoonhub:analytics]]
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local Stats = game:GetService("Stats")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local Aimbot = false
+local Wallbang = false
+local AimFOV = 150
+local SpeedValue = 16
+local JumpValue = 45
+local Noclip = false
+local ESP = false
+local Tracers = false
+local Crosshair = false
+local RainbowFOV = false
+local BulletSpeed = 2500
+local Prediction = true
+
+local PanelWidth = 430
+local BaseWidth = 430
+local BaseHeight = 290
+local AspectRatio = BaseHeight / BaseWidth
+
+local DiscordLink = "https://discord.gg/QxRKp9wNeE"
+
+local Circle = Drawing.new("Circle")
+Circle.Visible = false
+Circle.Thickness = 1.8
+Circle.Filled = false
+
+local GlowCircle = Drawing.new("Circle")
+GlowCircle.Visible = false
+GlowCircle.Thickness = 4
+GlowCircle.Transparency = 0.25
+GlowCircle.Filled = false
+
+local CrosshairH = Drawing.new("Line")
+CrosshairH.Visible = false
+CrosshairH.Thickness = 1.5
+CrosshairH.Color = Color3.fromRGB(129, 140, 248)
+
+local CrosshairV = Drawing.new("Line")
+CrosshairV.Visible = false
+CrosshairV.Thickness = 1.5
+CrosshairV.Color = Color3.fromRGB(129, 140, 248)
+
+local ESPCache = {}
+local TracerCache = {}
+local SavedCollide = {}
+
+local RayParams = RaycastParams.new()
+RayParams.FilterType = Enum.RaycastFilterType.Blacklist
+
+local function createESPObjects()
+	local box = Drawing.new("Square")
+	box.Visible = false
+	box.Thickness = 1.5
+	box.Filled = false
+	box.Color = Color3.fromRGB(129, 140, 248)
+
+	local label = Drawing.new("Text")
+	label.Visible = false
+	label.Center = true
+	label.Outline = true
+	label.OutlineColor = Color3.fromRGB(10, 12, 18)
+	label.Color = Color3.fromRGB(248, 250, 252)
+	label.Size = 11
+	label.Font = 2
+
+	return {
+		Box = box,
+		Label = label
+	}
+end
+
+local function clearESP()
+	for player, entry in pairs(ESPCache) do
+		if entry then
+			if entry.Box then
+				pcall(function() entry.Box:Remove() end)
+			end
+			if entry.Label then
+				pcall(function() entry.Label:Remove() end)
+			end
+		end
+		ESPCache[player] = nil
+	end
+end
+
+local function createTracerLine()
+	local line = Drawing.new("Line")
+	line.Visible = false
+	line.Thickness = 1.3
+	line.Color = Color3.fromRGB(165, 180, 252)
+	return line
+end
+
+local function clearTracers()
+	for player, line in pairs(TracerCache) do
+		if line then
+			pcall(function() line:Remove() end)
+		end
+		TracerCache[player] = nil
+	end
+end
+
+local function restoreCharacterCollisions()
+	for part, origCollide in pairs(SavedCollide) do
+		if part and part.Parent then
+			pcall(function()
+				part.CanCollide = origCollide
+			end)
+		end
+		SavedCollide[part] = nil
+	end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	if ESPCache[player] then
+		if ESPCache[player].Box then
+			pcall(function() ESPCache[player].Box:Remove() end)
+		end
+		if ESPCache[player].Label then
+			pcall(function() ESPCache[player].Label:Remove() end)
+		end
+		ESPCache[player] = nil
+	end
+	if TracerCache[player] then
+		pcall(function() TracerCache[player]:Remove() end)
+		TracerCache[player] = nil
+	end
+end)
+
+local function WallCheck(position, character)
+	if Wallbang then
+		return true
+	end
+	local origin = Camera.CFrame.Position
+	local direction = position - origin
+	if LocalPlayer.Character then
+		RayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+	else
+		RayParams.FilterDescendantsInstances = {}
+	end
+	local ray = workspace:Raycast(origin, direction, RayParams)
+	if ray then
+		return ray.Instance:IsDescendantOf(character)
+	end
+	return true
+end
+
+local function getPingMs()
+	local pingVal = 0
+	pcall(function()
+		local net = Stats and Stats:FindFirstChild("Network")
+		if net and net:FindFirstChild("ServerStatsItem") then
+			local dataPing = net.ServerStatsItem:FindFirstChild("Data Ping")
+			if dataPing and typeof(dataPing.GetValue) == "function" then
+				pingVal = math.floor(dataPing:GetValue() + 0.5)
+			end
+		end
+	end)
+	return pingVal
+end
+
+local function joinAnotherServer(statusCallback)
+	task.spawn(function()
+		local placeId = game.PlaceId
+		local currentJobId = game.JobId
+		if statusCallback then
+			statusCallback("Finding...")
+		end
+
+		local targetJobId = nil
+		local httpGetter = game.HttpGet
+		if typeof(httpGetter) == "function" then
+			pcall(function()
+				local url = string.format(
+					"https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
+					placeId
+				)
+				local raw = httpGetter(game, url)
+				local decoded = HttpService:JSONDecode(raw)
+				if decoded and typeof(decoded.data) == "table" then
+					for _, srv in ipairs(decoded.data) do
+						if typeof(srv) == "table"
+							and typeof(srv.id) == "string"
+							and srv.id ~= currentJobId
+							and tonumber(srv.playing)
+							and tonumber(srv.maxPlayers)
+							and srv.playing < srv.maxPlayers
+						then
+							targetJobId = srv.id
+							break
+						end
+					end
+				end
+			end)
+		end
+
+		if statusCallback then
+			statusCallback("Joining...")
+		end
+
+		local ok = false
+		if targetJobId then
+			ok = pcall(function()
+				TeleportService:TeleportToPlaceInstance(placeId, targetJobId, LocalPlayer)
+			end)
+		end
+		if not ok then
+			pcall(function()
+				TeleportService:Teleport(placeId, LocalPlayer)
+			end)
+		end
+	end)
+end
+
+-- Modern UI Construction (DARK MOON by biyxznd)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DARKMOON_ModernUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local parentOk = pcall(function() ScreenGui.Parent = CoreGui end)
+if not parentOk and LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+	ScreenGui.Parent = LocalPlayer.PlayerGui
+end
+
+local function addCorner(inst, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = inst
+	return c
+end
+
+local function addStroke(inst, color, thickness, transparency)
+	local s = Instance.new("UIStroke")
+	s.Color = color
+	s.Thickness = thickness or 1
+	s.Transparency = transparency or 0
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	s.Parent = inst
+	return s
+end
+
+-- Clean Moon Logo Toggle Button (Drag Support)
+local MoonToggleHolder = Instance.new("Frame")
+MoonToggleHolder.Name = "MoonLogoToggle"
+MoonToggleHolder.Size = UDim2.new(0, 52, 0, 52)
+MoonToggleHolder.Position = UDim2.new(0, 16, 0, 16)
+MoonToggleHolder.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+MoonToggleHolder.BorderSizePixel = 0
+MoonToggleHolder.Active = true
+MoonToggleHolder.Parent = ScreenGui
+addCorner(MoonToggleHolder, 999)
+
+local MoonOuterStroke = addStroke(MoonToggleHolder, Color3.fromRGB(165, 180, 252), 1.6, 0.15)
+
+local MoonDisc = Instance.new("Frame")
+MoonDisc.Name = "MoonDisc"
+MoonDisc.Size = UDim2.new(0, 36, 0, 36)
+MoonDisc.Position = UDim2.new(0.5, -18, 0.5, -18)
+MoonDisc.BackgroundColor3 = Color3.fromRGB(238, 241, 248)
+MoonDisc.BorderSizePixel = 0
+MoonDisc.Parent = MoonToggleHolder
+addCorner(MoonDisc, 999)
+
+local MoonGrad = Instance.new("UIGradient")
+MoonGrad.Rotation = 135
+MoonGrad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(252, 253, 255)),
+	ColorSequenceKeypoint.new(0.6, Color3.fromRGB(214, 220, 234)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 160, 182))
+})
+MoonGrad.Parent = MoonDisc
+
+local craterData = {
+	{size = 7, x = 8, y = 10, tr = 0.65},
+	{size = 5, x = 18, y = 19, tr = 0.7},
+	{size = 4, x = 11, y = 23, tr = 0.72}
+}
+for idx, cInfo in ipairs(craterData) do
+	local crater = Instance.new("Frame")
+	crater.Name = "Crater" .. idx
+	crater.Size = UDim2.new(0, cInfo.size, 0, cInfo.size)
+	crater.Position = UDim2.new(0, cInfo.x, 0, cInfo.y)
+	crater.BackgroundColor3 = Color3.fromRGB(145, 154, 176)
+	crater.BackgroundTransparency = cInfo.tr
+	crater.BorderSizePixel = 0
+	crater.Parent = MoonDisc
+	addCorner(crater, 999)
+end
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Name = "MoonClickTrigger"
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = ""
+ToggleBtn.AutoButtonColor = false
+ToggleBtn.Parent = MoonToggleHolder
+
+-- Compact Modern Window
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainWindow"
+MainFrame.Size = UDim2.new(0, BaseWidth, 0, BaseHeight)
+MainFrame.Position = UDim2.new(0.5, -BaseWidth / 2, 0.5, -BaseHeight / 2)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 17, 24)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+addCorner(MainFrame, 12)
+addStroke(MainFrame, Color3.fromRGB(51, 65, 85), 1, 0.25)
+
+local MainGrad = Instance.new("UIGradient")
+MainGrad.Rotation = 135
+MainGrad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 25, 36)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 14, 20))
+})
+MainGrad.Parent = MainFrame
+
+-- Header Bar
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 38)
+Header.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+Header.BorderSizePixel = 0
+Header.Parent = MainFrame
+addCorner(Header, 12)
+
+local HeaderFix = Instance.new("Frame")
+HeaderFix.Size = UDim2.new(1, 0, 0, 10)
+HeaderFix.Position = UDim2.new(0, 0, 1, -10)
+HeaderFix.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+HeaderFix.BorderSizePixel = 0
+HeaderFix.Parent = Header
+
+local AccentDot = Instance.new("Frame")
+AccentDot.Size = UDim2.new(0, 7, 0, 7)
+AccentDot.Position = UDim2.new(0, 14, 0.5, -3.5)
+AccentDot.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+AccentDot.BorderSizePixel = 0
+AccentDot.Parent = Header
+addCorner(AccentDot, 99)
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(0, 190, 1, 0)
+TitleText.Position = UDim2.new(0, 28, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "DARK MOON"
+TitleText.TextColor3 = Color3.fromRGB(248, 250, 252)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = Header
+
+local SubText = Instance.new("TextLabel")
+SubText.Size = UDim2.new(0, 140, 1, 0)
+SubText.Position = UDim2.new(1, -152, 0, 0)
+SubText.BackgroundTransparency = 1
+SubText.Text = "by biyxznd"
+SubText.TextColor3 = Color3.fromRGB(148, 163, 184)
+SubText.Font = Enum.Font.GothamMedium
+SubText.TextSize = 11
+SubText.TextXAlignment = Enum.TextXAlignment.Right
+SubText.Parent = Header
+
+-- Top Info Bar (Ping / FPS / Active Players / Discord gg)
+local TopInfoBar = Instance.new("Frame")
+TopInfoBar.Name = "TopInfoBar"
+TopInfoBar.Size = UDim2.new(1, -16, 0, 26)
+TopInfoBar.Position = UDim2.new(0, 8, 0, 42)
+TopInfoBar.BackgroundColor3 = Color3.fromRGB(20, 24, 35)
+TopInfoBar.BorderSizePixel = 0
+TopInfoBar.Parent = MainFrame
+addCorner(TopInfoBar, 8)
+addStroke(TopInfoBar, Color3.fromRGB(45, 55, 72), 1, 0.35)
+
+local StatsLabel = Instance.new("TextLabel")
+StatsLabel.Name = "StatsLabel"
+StatsLabel.Size = UDim2.new(0.55, -6, 1, 0)
+StatsLabel.Position = UDim2.new(0, 8, 0, 0)
+StatsLabel.BackgroundTransparency = 1
+StatsLabel.Text = "FPS: 60 | Ping: 0ms | Players: 1"
+StatsLabel.TextColor3 = Color3.fromRGB(203, 213, 225)
+StatsLabel.Font = Enum.Font.GothamBold
+StatsLabel.TextSize = 10
+StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatsLabel.Parent = TopInfoBar
+
+local DiscordBtn = Instance.new("TextButton")
+DiscordBtn.Name = "DiscordInviteBtn"
+DiscordBtn.Size = UDim2.new(0.43, -6, 0, 18)
+DiscordBtn.Position = UDim2.new(0.57, 0, 0.5, -9)
+DiscordBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+DiscordBtn.Text = "discord.gg/QxRKp9wNeE"
+DiscordBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
+DiscordBtn.Font = Enum.Font.GothamBold
+DiscordBtn.TextSize = 10
+DiscordBtn.AutoButtonColor = false
+DiscordBtn.Parent = TopInfoBar
+addCorner(DiscordBtn, 6)
+
+DiscordBtn.MouseButton1Click:Connect(function()
+	local copied = false
+	if typeof(setclipboard) == "function" then
+		pcall(function()
+			setclipboard(DiscordLink)
+			copied = true
+		end)
+	end
+	DiscordBtn.Text = copied and "Copied gg link!" or DiscordLink
+	task.delay(1.6, function()
+		if DiscordBtn and DiscordBtn.Parent then
+			DiscordBtn.Text = "discord.gg/QxRKp9wNeE"
+		end
+	end)
+end)
+
+-- Sidebar (Tabs)
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 112, 1, -80)
+Sidebar.Position = UDim2.new(0, 8, 0, 72)
+Sidebar.BackgroundColor3 = Color3.fromRGB(19, 22, 31)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+addCorner(Sidebar, 9)
+addStroke(Sidebar, Color3.fromRGB(36, 43, 61), 1, 0.25)
+
+local SideLayout = Instance.new("UIListLayout")
+SideLayout.Padding = UDim.new(0, 5)
+SideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+SideLayout.Parent = Sidebar
+
+local SidePad = Instance.new("UIPadding")
+SidePad.PaddingTop = UDim.new(0, 6)
+SidePad.PaddingBottom = UDim.new(0, 6)
+SidePad.PaddingLeft = UDim.new(0, 6)
+SidePad.PaddingRight = UDim.new(0, 6)
+SidePad.Parent = Sidebar
+
+-- Content Area
+local ContentArea = Instance.new("Frame")
+ContentArea.Name = "ContentArea"
+ContentArea.Size = UDim2.new(1, -132, 1, -80)
+ContentArea.Position = UDim2.new(0, 124, 0, 72)
+ContentArea.BackgroundColor3 = Color3.fromRGB(19, 22, 31)
+ContentArea.BorderSizePixel = 0
+ContentArea.Parent = MainFrame
+addCorner(ContentArea, 9)
+addStroke(ContentArea, Color3.fromRGB(36, 43, 61), 1, 0.25)
+
+local TabPages = {}
+local TabButtons = {}
+local tabOrderCounter = 0
+
+local function createTab(name)
+	tabOrderCounter += 1
+	local btn = Instance.new("TextButton")
+	btn.Name = name .. "TabBtn"
+	btn.LayoutOrder = tabOrderCounter
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.BackgroundColor3 = Color3.fromRGB(28, 32, 46)
+	btn.BackgroundTransparency = 1
+	btn.Text = name
+	btn.TextColor3 = Color3.fromRGB(148, 163, 184)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 12
+	btn.AutoButtonColor = false
+	btn.Parent = Sidebar
+	addCorner(btn, 7)
+
+	local page = Instance.new("ScrollingFrame")
+	page.Name = name .. "Page"
+	page.Size = UDim2.new(1, 0, 1, 0)
+	page.BackgroundTransparency = 1
+	page.BorderSizePixel = 0
+	page.ScrollBarThickness = 3
+	page.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
+	page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	page.Visible = false
+	page.Parent = ContentArea
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.Parent = page
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.Parent = page
+
+	btn.MouseButton1Click:Connect(function()
+		for tName, p in pairs(TabPages) do
+			p.Visible = (tName == name)
+		end
+		for tName, b in pairs(TabButtons) do
+			local active = (tName == name)
+			b.BackgroundTransparency = active and 0.15 or 1
+			b.TextColor3 = active and Color3.fromRGB(248, 250, 252) or Color3.fromRGB(148, 163, 184)
+		end
+	end)
+
+	TabPages[name] = page
+	TabButtons[name] = btn
+	return page
+end
+
+local function addToggle(page, labelText, defaultVal, callback)
+	local state = defaultVal or false
+
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 34)
+	row.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	row.BorderSizePixel = 0
+	row.Parent = page
+	addCorner(row, 7)
+	addStroke(row, Color3.fromRGB(45, 55, 72), 1, 0.4)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -58, 1, 0)
+	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = labelText
+	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 12
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = row
+
+	local pill = Instance.new("TextButton")
+	pill.Size = UDim2.new(0, 40, 0, 20)
+	pill.Position = UDim2.new(1, -48, 0.5, -10)
+	pill.BackgroundColor3 = state and Color3.fromRGB(99, 102, 241) or Color3.fromRGB(51, 65, 85)
+	pill.Text = ""
+	pill.AutoButtonColor = false
+	pill.Parent = row
+	addCorner(pill, 99)
+
+	local knob = Instance.new("Frame")
+	knob.Size = UDim2.new(0, 16, 0, 16)
+	knob.Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	knob.BorderSizePixel = 0
+	knob.Parent = pill
+	addCorner(knob, 99)
+
+	local function refreshVisual(animated)
+		local targetPill = state and Color3.fromRGB(99, 102, 241) or Color3.fromRGB(51, 65, 85)
+		local targetKnob = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+		if animated then
+			TweenService:Create(pill, TweenInfo.new(0.12), {BackgroundColor3 = targetPill}):Play()
+			TweenService:Create(knob, TweenInfo.new(0.12), {Position = targetKnob}):Play()
+		else
+			pill.BackgroundColor3 = targetPill
+			knob.Position = targetKnob
+		end
+	end
+
+	pill.MouseButton1Click:Connect(function()
+		state = not state
+		refreshVisual(true)
+		if callback then
+			callback(state)
+		end
+	end)
+
+	if callback then
+		callback(state)
+	end
+end
+
+local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal, callback)
+	increment = increment or 1
+	local value = math.clamp(defaultVal or minVal, minVal, maxVal)
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(1, 0, 0, 44)
+	frame.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	frame.BorderSizePixel = 0
+	frame.Parent = page
+	addCorner(frame, 7)
+	addStroke(frame, Color3.fromRGB(45, 55, 72), 1, 0.4)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(0.7, 0, 0, 18)
+	title.Position = UDim2.new(0, 10, 0, 3)
+	title.BackgroundTransparency = 1
+	title.Text = labelText
+	title.TextColor3 = Color3.fromRGB(226, 232, 240)
+	title.Font = Enum.Font.GothamMedium
+	title.TextSize = 12
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = frame
+
+	local valLabel = Instance.new("TextLabel")
+	valLabel.Size = UDim2.new(0.3, -10, 0, 18)
+	valLabel.Position = UDim2.new(0.7, 0, 0, 3)
+	valLabel.BackgroundTransparency = 1
+	valLabel.Text = tostring(value)
+	valLabel.TextColor3 = Color3.fromRGB(129, 140, 248)
+	valLabel.Font = Enum.Font.GothamBold
+	valLabel.TextSize = 12
+	valLabel.TextXAlignment = Enum.TextXAlignment.Right
+	valLabel.Parent = frame
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(1, -20, 0, 5)
+	track.Position = UDim2.new(0, 10, 0, 29)
+	track.BackgroundColor3 = Color3.fromRGB(51, 65, 85)
+	track.BorderSizePixel = 0
+	track.Parent = frame
+	addCorner(track, 99)
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	addCorner(fill, 99)
+
+	local draggingSlider = false
+
+	local function setFromAlpha(alpha)
+		alpha = math.clamp(alpha, 0, 1)
+		local raw = minVal + (maxVal - minVal) * alpha
+		local stepped = math.floor((raw / increment) + 0.5) * increment
+		stepped = math.clamp(stepped, minVal, maxVal)
+		value = stepped
+		local ratio = (value - minVal) / math.max((maxVal - minVal), 1e-6)
+		fill.Size = UDim2.new(math.clamp(ratio, 0, 1), 0, 1, 0)
+		valLabel.Text = tostring(value)
+		if callback then
+			callback(value)
+		end
+	end
+
+	setFromAlpha((value - minVal) / math.max((maxVal - minVal), 1e-6))
+
+	track.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = true
+			local relX = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
+			setFromAlpha(relX)
+		end
+	end)
+
+	UIS.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingSlider = false
+		end
+	end)
+
+	UIS.InputChanged:Connect(function(input)
+		if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local relX = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
+			setFromAlpha(relX)
+		end
+	end)
+end
+
+local function addButton(page, labelText, btnText, callback)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 36)
+	row.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	row.BorderSizePixel = 0
+	row.Parent = page
+	addCorner(row, 7)
+	addStroke(row, Color3.fromRGB(45, 55, 72), 1, 0.4)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(0.55, -10, 1, 0)
+	lbl.Position = UDim2.new(0, 10, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = labelText
+	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 12
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = row
+
+	local actionBtn = Instance.new("TextButton")
+	actionBtn.Size = UDim2.new(0.42, -6, 0, 24)
+	actionBtn.Position = UDim2.new(0.58, 0, 0.5, -12)
+	actionBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+	actionBtn.Text = btnText
+	actionBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
+	actionBtn.Font = Enum.Font.GothamBold
+	actionBtn.TextSize = 11
+	actionBtn.AutoButtonColor = false
+	actionBtn.Parent = row
+	addCorner(actionBtn, 6)
+
+	actionBtn.MouseButton1Click:Connect(function()
+		if callback then
+			callback(actionBtn)
+		end
+	end)
+
+	return actionBtn
+end
+
+-- Tabs (Settings strictly at the very last)
+local CombatTab = createTab("Combat")
+local MoveTab = createTab("Movement")
+local VisualTab = createTab("Visuals")
+local SettingsTab = createTab("Settings")
+
+-- Activate Combat tab by default
+TabPages["Combat"].Visible = true
+TabButtons["Combat"].BackgroundTransparency = 0.15
+TabButtons["Combat"].TextColor3 = Color3.fromRGB(248, 250, 252)
+
+-- Controls
+addToggle(CombatTab, "Aimbot", false, function(v)
+	Aimbot = v
+	Circle.Visible = v
+	GlowCircle.Visible = v
+end)
+
+addToggle(CombatTab, "Wallbang", false, function(v)
+	Wallbang = v
+end)
+
+addSlider(CombatTab, "Aim FOV", 50, 500, 10, 150, function(v)
+	AimFOV = v
+end)
+
+addToggle(CombatTab, "Rainbow FOV", false, function(v)
+	RainbowFOV = v
+end)
+
+addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
+	SpeedValue = v
+end)
+
+addSlider(MoveTab, "Jump", 45, 150, 5, 45, function(v)
+	JumpValue = v
+end)
+
+addToggle(MoveTab, "Noclip", false, function(v)
+	Noclip = v
+	if not Noclip then
+		restoreCharacterCollisions()
+	end
+end)
+
+addToggle(VisualTab, "ESP", false, function(v)
+	ESP = v
+	if not ESP then
+		clearESP()
+	end
+end)
+
+addToggle(VisualTab, "Tracers", false, function(v)
+	Tracers = v
+	if not Tracers then
+		clearTracers()
+	end
+end)
+
+addToggle(VisualTab, "Crosshair", false, function(v)
+	Crosshair = v
+	CrosshairH.Visible = v
+	CrosshairV.Visible = v
+end)
+
+local function applyPanelSize(newWidth)
+	PanelWidth = math.clamp(newWidth, 360, 560)
+	local newHeight = math.floor((PanelWidth * AspectRatio) + 0.5)
+	MainFrame.Size = UDim2.new(0, PanelWidth, 0, newHeight)
+	MainFrame.Position = UDim2.new(0.5, -PanelWidth / 2, 0.5, -newHeight / 2)
+end
+
+addButton(SettingsTab, "Server Hop", "Join Server", function(btn)
+	local prevText = btn.Text
+	joinAnotherServer(function(msg)
+		if btn and btn.Parent then
+			btn.Text = msg
+		end
+	end)
+	task.delay(3, function()
+		if btn and btn.Parent then
+			btn.Text = prevText
+		end
+	end)
+end)
+
+addSlider(SettingsTab, "Panel Size", 360, 560, 10, BaseWidth, function(v)
+	applyPanelSize(v)
+end)
+
+-- Moon Logo Toggle Button (Drag Support + Keybind)
+local function setWindowVisible(vis)
+	MainFrame.Visible = vis
+	MoonDisc.BackgroundTransparency = vis and 0 or 0.25
+	MoonOuterStroke.Color = vis and Color3.fromRGB(165, 180, 252) or Color3.fromRGB(99, 102, 241)
+	MoonOuterStroke.Transparency = vis and 0.1 or 0.45
+end
+
+do
+	local btnDragging = false
+	local movedEnough = false
+	local btnDragInput = nil
+	local btnDragStart = nil
+	local btnStartPos = nil
+
+	ToggleBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			btnDragging = true
+			movedEnough = false
+			btnDragStart = input.Position
+			btnStartPos = MoonToggleHolder.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					local wasDragged = movedEnough
+					btnDragging = false
+					if not wasDragged then
+						setWindowVisible(not MainFrame.Visible)
+					end
+				end
+			end)
+		end
+	end)
+
+	ToggleBtn.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			btnDragInput = input
+		end
+	end)
+
+	UIS.InputChanged:Connect(function(input)
+		if input == btnDragInput and btnDragging then
+			local delta = input.Position - btnDragStart
+			if delta.Magnitude > 6 then
+				movedEnough = true
+			end
+			MoonToggleHolder.Position = UDim2.new(
+				btnStartPos.X.Scale,
+				btnStartPos.X.Offset + delta.X,
+				btnStartPos.Y.Scale,
+				btnStartPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+UIS.InputBegan:Connect(function(input, gameProcessed)
+	if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+		setWindowVisible(not MainFrame.Visible)
+	end
+end)
+
+-- Dragging for Main Window
+do
+	local dragging = false
+	local dragInput = nil
+	local dragStart = nil
+	local startPos = nil
+
+	Header.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = MainFrame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+
+	Header.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	UIS.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local delta = input.Position - dragStart
+			MainFrame.Position = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+-- Unified Optimized Render Loop
+local frameCount = 0
+local statsElapsed = 0
+local moveElapsed = 0
+local lastPing = 0
+
+RunService.RenderStepped:Connect(function(dt)
+	Camera = workspace.CurrentCamera
+	if not Camera then return end
+
+	frameCount += 1
+	statsElapsed += dt
+	moveElapsed += dt
+
+	if statsElapsed >= 0.75 then
+		local fps = math.floor((frameCount / statsElapsed) + 0.5)
+		lastPing = getPingMs()
+		StatsLabel.Text = string.format("FPS: %d | Ping: %dms | Players: %d", fps, lastPing, #Players:GetPlayers())
+		frameCount = 0
+		statsElapsed = 0
+	end
+
+	local char = LocalPlayer.Character
+	if char and moveElapsed >= 0.1 then
+		moveElapsed = 0
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			if hum.WalkSpeed ~= SpeedValue then
+				hum.WalkSpeed = SpeedValue
+			end
+			if not hum.UseJumpPower then
+				hum.UseJumpPower = true
+			end
+			if hum.JumpPower ~= JumpValue then
+				hum.JumpPower = JumpValue
+			end
+		end
+
+		if Noclip then
+			for _, desc in ipairs(char:GetDescendants()) do
+				if desc:IsA("BasePart") then
+					if SavedCollide[desc] == nil then
+						SavedCollide[desc] = desc.CanCollide
+					end
+					if desc.CanCollide then
+						desc.CanCollide = false
+					end
+				end
+			end
+		end
+	end
+
+	local vp = Camera.ViewportSize
+	local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+
+	if Aimbot then
+		Circle.Position = screenCenter
+		Circle.Radius = AimFOV
+		GlowCircle.Position = screenCenter
+		GlowCircle.Radius = AimFOV
+
+		local fovColor
+		if RainbowFOV then
+			fovColor = Color3.fromHSV((os.clock() % 5) / 5, 1, 1)
+		else
+			fovColor = Color3.fromRGB(255, 0, 0)
+		end
+		Circle.Color = fovColor
+		GlowCircle.Color = fovColor
+
+		local closestPart = nil
+		local shortestDistance = AimFOV
+
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player ~= LocalPlayer and player.Character then
+				local head = player.Character:FindFirstChild("Head")
+				local hum = player.Character:FindFirstChildOfClass("Humanoid")
+				if head and hum and hum.Health > 0 then
+					local pos, visible = Camera:WorldToViewportPoint(head.Position)
+					if visible and pos.Z > 0 and WallCheck(head.Position, player.Character) then
+						local dist = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+						if dist < shortestDistance then
+							shortestDistance = dist
+							closestPart = head
+						end
+					end
+				end
+			end
+		end
+
+		if closestPart then
+			local aimPosition = closestPart.Position
+			if Prediction then
+				local dist3D = (Camera.CFrame.Position - closestPart.Position).Magnitude
+				aimPosition = closestPart.Position + (closestPart.AssemblyLinearVelocity * (dist3D / BulletSpeed))
+			end
+			Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPosition)
+		end
+	end
+
+	if Crosshair then
+		local gap = 4
+		local arm = 10
+		CrosshairH.From = Vector2.new(screenCenter.X - (gap + arm), screenCenter.Y)
+		CrosshairH.To = Vector2.new(screenCenter.X + (gap + arm), screenCenter.Y)
+		CrosshairV.From = Vector2.new(screenCenter.X, screenCenter.Y - (gap + arm))
+		CrosshairV.To = Vector2.new(screenCenter.X, screenCenter.Y + (gap + arm))
+	end
+
+	if ESP or Tracers then
+		local localRoot = char and char:FindFirstChild("HumanoidRootPart")
+		local tracerOrigin = Vector2.new(vp.X * 0.5, vp.Y)
+
+		for _, p in ipairs(Players:GetPlayers()) do
+			local pChar = (p ~= LocalPlayer) and p.Character or nil
+			local hrp = pChar and pChar:FindFirstChild("HumanoidRootPart")
+			local hum = pChar and pChar:FindFirstChildOfClass("Humanoid")
+			local validAlive = (hrp and hum and hum.Health > 0)
+
+			local rootPos, onScreen, topPos, bottomPos, width, height
+			if validAlive then
+				rootPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+				if onScreen and rootPos.Z > 0 then
+					topPos = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0))
+					bottomPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3.5, 0))
+					height = math.clamp(math.abs(bottomPos.Y - topPos.Y), 14, 600)
+					width = math.clamp(height * 0.55, 10, 400)
+				else
+					onScreen = false
+				end
+			end
+
+			if ESP then
+				if not ESPCache[p] then
+					ESPCache[p] = createESPObjects()
+				end
+				local entry = ESPCache[p]
+				if validAlive and onScreen then
+					local boxX = rootPos.X - (width * 0.5)
+					local boxY = topPos.Y
+					entry.Box.Size = Vector2.new(width, height)
+					entry.Box.Position = Vector2.new(boxX, boxY)
+					entry.Box.Visible = true
+
+					local distText = ""
+					if localRoot then
+						distText = " [" .. tostring(math.floor((localRoot.Position - hrp.Position).Magnitude)) .. "m]"
+					end
+					entry.Label.Text = p.Name .. distText
+					entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 14, 4))
+					entry.Label.Visible = true
+				else
+					entry.Box.Visible = false
+					entry.Label.Visible = false
+				end
+			elseif ESPCache[p] then
+				ESPCache[p].Box.Visible = false
+				ESPCache[p].Label.Visible = false
+			end
+
+			if Tracers then
+				if not TracerCache[p] then
+					TracerCache[p] = createTracerLine()
+				end
+				local line = TracerCache[p]
+				if validAlive and onScreen then
+					line.From = tracerOrigin
+					line.To = Vector2.new(rootPos.X, bottomPos.Y)
+					line.Visible = true
+				else
+					line.Visible = false
+				end
+			elseif TracerCache[p] then
+				TracerCache[p].Visible = false
+			end
+		end
+	end
+end)
