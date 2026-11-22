@@ -12,7 +12,8 @@ local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
 local Aimbot = false
-local Wallbang = false
+local SilentAim = false
+local SilentHitChance = 100
 local AimFOV = 150
 local SpeedValue = 16
 local JumpValue = 45
@@ -33,36 +34,34 @@ local DiscordLink = "https://discord.gg/QxRKp9wNeE"
 
 local Circle = Drawing.new("Circle")
 Circle.Visible = false
-Circle.Thickness = 1.8
+Circle.Thickness = 2
 Circle.Filled = false
 
 local GlowCircle = Drawing.new("Circle")
 GlowCircle.Visible = false
-GlowCircle.Thickness = 4
-GlowCircle.Transparency = 0.25
+GlowCircle.Thickness = 6
+GlowCircle.Transparency = 0.3
 GlowCircle.Filled = false
 
 local CrosshairH = Drawing.new("Line")
 CrosshairH.Visible = false
-CrosshairH.Thickness = 1.5
+CrosshairH.Thickness = 1.6
 CrosshairH.Color = Color3.fromRGB(129, 140, 248)
 
 local CrosshairV = Drawing.new("Line")
 CrosshairV.Visible = false
-CrosshairV.Thickness = 1.5
+CrosshairV.Thickness = 1.6
 CrosshairV.Color = Color3.fromRGB(129, 140, 248)
 
 local ESPCache = {}
 local TracerCache = {}
 local SavedCollide = {}
-
-local RayParams = RaycastParams.new()
-RayParams.FilterType = Enum.RaycastFilterType.Blacklist
+local SilentTargetPos = nil
 
 local function createESPObjects()
 	local box = Drawing.new("Square")
 	box.Visible = false
-	box.Thickness = 1.5
+	box.Thickness = 1.6
 	box.Filled = false
 	box.Color = Color3.fromRGB(129, 140, 248)
 
@@ -98,7 +97,7 @@ end
 local function createTracerLine()
 	local line = Drawing.new("Line")
 	line.Visible = false
-	line.Thickness = 1.3
+	line.Thickness = 1.4
 	line.Color = Color3.fromRGB(165, 180, 252)
 	return line
 end
@@ -139,22 +138,112 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 end)
 
+local sharedRayParams = RaycastParams.new()
+sharedRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
 local function WallCheck(position, character)
-	if Wallbang then
+	local cam = workspace.CurrentCamera
+	if not cam then
 		return true
 	end
-	local origin = Camera.CFrame.Position
+	local origin = cam.CFrame.Position
 	local direction = position - origin
-	if LocalPlayer.Character then
-		RayParams.FilterDescendantsInstances = {LocalPlayer.Character}
-	else
-		RayParams.FilterDescendantsInstances = {}
-	end
-	local ray = workspace:Raycast(origin, direction, RayParams)
+	sharedRayParams.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
+	local ray = workspace:Raycast(origin, direction, sharedRayParams)
 	if ray then
 		return ray.Instance:IsDescendantOf(character)
 	end
 	return true
+end
+
+local function getClosestTarget(screenCenter)
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return nil
+	end
+
+	local closestPart = nil
+	local shortestDistance = AimFOV
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character then
+			local head = player.Character:FindFirstChild("Head")
+			local hum = player.Character:FindFirstChildOfClass("Humanoid")
+			if head and hum and hum.Health > 0 then
+				local pos, visible = cam:WorldToViewportPoint(head.Position)
+				if visible and pos.Z > 0 and WallCheck(head.Position, player.Character) then
+					local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+					if distance < shortestDistance then
+						shortestDistance = distance
+						closestPart = head
+					end
+				end
+			end
+		end
+	end
+
+	if not closestPart then
+		return nil
+	end
+
+	local aimPosition = closestPart.Position
+	if Prediction then
+		local velocity = closestPart.AssemblyLinearVelocity
+		local distance = (cam.CFrame.Position - closestPart.Position).Magnitude
+		local time = distance / math.max(BulletSpeed, 1)
+		aimPosition = closestPart.Position + (velocity * time)
+	end
+
+	return aimPosition
+end
+
+local function rollSilentHitChance()
+	if SilentHitChance >= 100 then
+		return true
+	end
+	if SilentHitChance <= 0 then
+		return false
+	end
+	return math.random(1, 100) <= SilentHitChance
+end
+
+-- Safe Silent Aim __namecall Hook (when supported by executor)
+do
+	local hookFn = (typeof(hookmetamethod) == "function") and hookmetamethod or nil
+	local getNamecallMethodFn = (typeof(getnamecallmethod) == "function") and getnamecallmethod or nil
+	local checkCallerFn = (typeof(checkcaller) == "function") and checkcaller or nil
+
+	if hookFn and getNamecallMethodFn then
+		pcall(function()
+			local oldNamecall
+			oldNamecall = hookFn(game, "__namecall", function(self, ...)
+				if checkCallerFn and checkCallerFn() then
+					return oldNamecall(self, ...)
+				end
+
+				if SilentAim and SilentTargetPos and self == workspace and rollSilentHitChance() then
+					local method = getNamecallMethodFn()
+					local args = {...}
+
+					if method == "Raycast" and typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" then
+						local origin = args[1]
+						local dist = args[2].Magnitude
+						local dirUnit = (SilentTargetPos - origin).Unit
+						args[2] = dirUnit * math.max(dist, 1)
+						return oldNamecall(self, table.unpack(args))
+					elseif (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") and typeof(args[1]) == "Ray" then
+						local rayObj = args[1]
+						local dist = rayObj.Direction.Magnitude
+						local dirUnit = (SilentTargetPos - rayObj.Origin).Unit
+						args[1] = Ray.new(rayObj.Origin, dirUnit * math.max(dist, 1))
+						return oldNamecall(self, table.unpack(args))
+					end
+				end
+
+				return oldNamecall(self, ...)
+			end)
+		end)
+	end
 end
 
 local function getPingMs()
@@ -252,7 +341,7 @@ local function addStroke(inst, color, thickness, transparency)
 	return s
 end
 
--- Clean Moon Logo Toggle Button (Drag Support)
+-- Clean Moon Logo Toggle Button (No Side Black Line + Drag Support)
 local MoonToggleHolder = Instance.new("Frame")
 MoonToggleHolder.Name = "MoonLogoToggle"
 MoonToggleHolder.Size = UDim2.new(0, 52, 0, 52)
@@ -263,7 +352,7 @@ MoonToggleHolder.Active = true
 MoonToggleHolder.Parent = ScreenGui
 addCorner(MoonToggleHolder, 999)
 
-local MoonOuterStroke = addStroke(MoonToggleHolder, Color3.fromRGB(165, 180, 252), 1.6, 0.15)
+local MoonOuterStroke = addStroke(MoonToggleHolder, Color3.fromRGB(165, 180, 252), 1.8, 0.15)
 
 local MoonDisc = Instance.new("Frame")
 MoonDisc.Name = "MoonDisc"
@@ -318,7 +407,7 @@ MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Parent = ScreenGui
 addCorner(MainFrame, 12)
-addStroke(MainFrame, Color3.fromRGB(51, 65, 85), 1, 0.25)
+addStroke(MainFrame, Color3.fromRGB(51, 65, 85), 1.2, 0.2)
 
 local MainGrad = Instance.new("UIGradient")
 MainGrad.Rotation = 135
@@ -562,8 +651,8 @@ local function addToggle(page, labelText, defaultVal, callback)
 		local targetPill = state and Color3.fromRGB(99, 102, 241) or Color3.fromRGB(51, 65, 85)
 		local targetKnob = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
 		if animated then
-			TweenService:Create(pill, TweenInfo.new(0.12), {BackgroundColor3 = targetPill}):Play()
-			TweenService:Create(knob, TweenInfo.new(0.12), {Position = targetKnob}):Play()
+			TweenService:Create(pill, TweenInfo.new(0.14), {BackgroundColor3 = targetPill}):Play()
+			TweenService:Create(knob, TweenInfo.new(0.14), {Position = targetKnob}):Play()
 		else
 			pill.BackgroundColor3 = targetPill
 			knob.Position = targetKnob
@@ -727,12 +816,23 @@ TabButtons["Combat"].TextColor3 = Color3.fromRGB(248, 250, 252)
 -- Controls
 addToggle(CombatTab, "Aimbot", false, function(v)
 	Aimbot = v
-	Circle.Visible = v
-	GlowCircle.Visible = v
+	local showFov = Aimbot or SilentAim
+	Circle.Visible = showFov
+	GlowCircle.Visible = showFov
 end)
 
-addToggle(CombatTab, "Wallbang", false, function(v)
-	Wallbang = v
+addToggle(CombatTab, "Silent Aim", false, function(v)
+	SilentAim = v
+	if not SilentAim then
+		SilentTargetPos = nil
+	end
+	local showFov = Aimbot or SilentAim
+	Circle.Visible = showFov
+	GlowCircle.Visible = showFov
+end)
+
+addSlider(CombatTab, "Hit Chance", 0, 100, 5, 100, function(v)
+	SilentHitChance = v
 end)
 
 addSlider(CombatTab, "Aim FOV", 50, 500, 10, 150, function(v)
@@ -807,8 +907,10 @@ end)
 local function setWindowVisible(vis)
 	MainFrame.Visible = vis
 	MoonDisc.BackgroundTransparency = vis and 0 or 0.25
-	MoonOuterStroke.Color = vis and Color3.fromRGB(165, 180, 252) or Color3.fromRGB(99, 102, 241)
-	MoonOuterStroke.Transparency = vis and 0.1 or 0.45
+	TweenService:Create(MoonOuterStroke, TweenInfo.new(0.15), {
+		Color = vis and Color3.fromRGB(165, 180, 252) or Color3.fromRGB(99, 102, 241),
+		Transparency = vis and 0.1 or 0.45
+	}):Play()
 end
 
 do
@@ -817,6 +919,18 @@ do
 	local btnDragInput = nil
 	local btnDragStart = nil
 	local btnStartPos = nil
+
+	ToggleBtn.MouseEnter:Connect(function()
+		if not btnDragging then
+			TweenService:Create(MoonToggleHolder, TweenInfo.new(0.14), {Size = UDim2.new(0, 56, 0, 56)}):Play()
+		end
+	end)
+
+	ToggleBtn.MouseLeave:Connect(function()
+		if not btnDragging then
+			TweenService:Create(MoonToggleHolder, TweenInfo.new(0.14), {Size = UDim2.new(0, 52, 0, 52)}):Play()
+		end
+	end)
 
 	ToggleBtn.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -828,6 +942,7 @@ do
 				if input.UserInputState == Enum.UserInputState.End then
 					local wasDragged = movedEnough
 					btnDragging = false
+					TweenService:Create(MoonToggleHolder, TweenInfo.new(0.14), {Size = UDim2.new(0, 52, 0, 52)}):Play()
 					if not wasDragged then
 						setWindowVisible(not MainFrame.Visible)
 					end
@@ -903,181 +1018,192 @@ do
 	end)
 end
 
--- Unified Optimized Render Loop
-local frameCount = 0
-local statsElapsed = 0
-local moveElapsed = 0
-local lastPing = 0
+-- Single Unified & Phone-Optimized Frame Loop
+do
+	local frameCount = 0
+	local statsElapsed = 0
+	local noclipElapsed = 0
 
-RunService.RenderStepped:Connect(function(dt)
-	Camera = workspace.CurrentCamera
-	if not Camera then return end
-
-	frameCount += 1
-	statsElapsed += dt
-	moveElapsed += dt
-
-	if statsElapsed >= 0.75 then
-		local fps = math.floor((frameCount / statsElapsed) + 0.5)
-		lastPing = getPingMs()
-		StatsLabel.Text = string.format("FPS: %d | Ping: %dms | Players: %d", fps, lastPing, #Players:GetPlayers())
-		frameCount = 0
-		statsElapsed = 0
-	end
-
-	local char = LocalPlayer.Character
-	if char and moveElapsed >= 0.1 then
-		moveElapsed = 0
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum then
-			if hum.WalkSpeed ~= SpeedValue then
-				hum.WalkSpeed = SpeedValue
-			end
-			if not hum.UseJumpPower then
-				hum.UseJumpPower = true
-			end
-			if hum.JumpPower ~= JumpValue then
-				hum.JumpPower = JumpValue
-			end
+	RunService.RenderStepped:Connect(function(dt)
+		Camera = workspace.CurrentCamera
+		if not Camera then
+			return
 		end
 
-		if Noclip then
-			for _, desc in ipairs(char:GetDescendants()) do
-				if desc:IsA("BasePart") then
-					if SavedCollide[desc] == nil then
-						SavedCollide[desc] = desc.CanCollide
-					end
-					if desc.CanCollide then
-						desc.CanCollide = false
-					end
+		-- Throttled Stats Bar Update (reduces mobile UI overhead)
+		frameCount += 1
+		statsElapsed += dt
+		if statsElapsed >= 0.75 then
+			local fps = math.floor((frameCount / statsElapsed) + 0.5)
+			local ping = getPingMs()
+			local activePlayers = #Players:GetPlayers()
+			StatsLabel.Text = string.format("FPS: %d | Ping: %dms | Players: %d", fps, ping, activePlayers)
+			frameCount = 0
+			statsElapsed = 0
+		end
+
+		-- Movement & Throttled Noclip
+		local char = LocalPlayer.Character
+		if char then
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hum then
+				if hum.WalkSpeed ~= SpeedValue then
+					hum.WalkSpeed = SpeedValue
+				end
+				if not hum.UseJumpPower then
+					hum.UseJumpPower = true
+				end
+				if hum.JumpPower ~= JumpValue then
+					hum.JumpPower = JumpValue
 				end
 			end
-		end
-	end
 
-	local vp = Camera.ViewportSize
-	local screenCenter = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
-
-	if Aimbot then
-		Circle.Position = screenCenter
-		Circle.Radius = AimFOV
-		GlowCircle.Position = screenCenter
-		GlowCircle.Radius = AimFOV
-
-		local fovColor
-		if RainbowFOV then
-			fovColor = Color3.fromHSV((os.clock() % 5) / 5, 1, 1)
-		else
-			fovColor = Color3.fromRGB(255, 0, 0)
-		end
-		Circle.Color = fovColor
-		GlowCircle.Color = fovColor
-
-		local closestPart = nil
-		local shortestDistance = AimFOV
-
-		for _, player in ipairs(Players:GetPlayers()) do
-			if player ~= LocalPlayer and player.Character then
-				local head = player.Character:FindFirstChild("Head")
-				local hum = player.Character:FindFirstChildOfClass("Humanoid")
-				if head and hum and hum.Health > 0 then
-					local pos, visible = Camera:WorldToViewportPoint(head.Position)
-					if visible and pos.Z > 0 and WallCheck(head.Position, player.Character) then
-						local dist = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
-						if dist < shortestDistance then
-							shortestDistance = dist
-							closestPart = head
+			if Noclip then
+				noclipElapsed += dt
+				if noclipElapsed >= 0.1 then
+					noclipElapsed = 0
+					for _, desc in ipairs(char:GetDescendants()) do
+						if desc:IsA("BasePart") then
+							if SavedCollide[desc] == nil then
+								SavedCollide[desc] = desc.CanCollide
+							end
+							if desc.CanCollide then
+								desc.CanCollide = false
+							end
 						end
 					end
 				end
 			end
 		end
 
-		if closestPart then
-			local aimPosition = closestPart.Position
-			if Prediction then
-				local dist3D = (Camera.CFrame.Position - closestPart.Position).Magnitude
-				aimPosition = closestPart.Position + (closestPart.AssemblyLinearVelocity * (dist3D / BulletSpeed))
+		local screenCenter = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
+		local showFov = Aimbot or SilentAim
+		Circle.Visible = showFov
+		GlowCircle.Visible = showFov
+
+		if showFov then
+			Circle.Position = screenCenter
+			Circle.Radius = AimFOV
+			GlowCircle.Position = screenCenter
+			GlowCircle.Radius = AimFOV
+
+			if RainbowFOV then
+				local col = Color3.fromHSV((os.clock() % 5) / 5, 1, 1)
+				Circle.Color = col
+				GlowCircle.Color = col
+			else
+				local red = Color3.fromRGB(255, 0, 0)
+				Circle.Color = red
+				GlowCircle.Color = red
 			end
-			Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPosition)
 		end
-	end
 
-	if Crosshair then
-		local gap = 4
-		local arm = 10
-		CrosshairH.From = Vector2.new(screenCenter.X - (gap + arm), screenCenter.Y)
-		CrosshairH.To = Vector2.new(screenCenter.X + (gap + arm), screenCenter.Y)
-		CrosshairV.From = Vector2.new(screenCenter.X, screenCenter.Y - (gap + arm))
-		CrosshairV.To = Vector2.new(screenCenter.X, screenCenter.Y + (gap + arm))
-	end
+		if Crosshair then
+			local gap = 4
+			local arm = 10
+			CrosshairH.From = Vector2.new(screenCenter.X - (gap + arm), screenCenter.Y)
+			CrosshairH.To = Vector2.new(screenCenter.X + (gap + arm), screenCenter.Y)
+			CrosshairV.From = Vector2.new(screenCenter.X, screenCenter.Y - (gap + arm))
+			CrosshairV.To = Vector2.new(screenCenter.X, screenCenter.Y + (gap + arm))
+			CrosshairH.Visible = true
+			CrosshairV.Visible = true
+		else
+			CrosshairH.Visible = false
+			CrosshairV.Visible = false
+		end
 
-	if ESP or Tracers then
+		if Aimbot or SilentAim then
+			local targetPos = getClosestTarget(screenCenter)
+			SilentTargetPos = SilentAim and targetPos or nil
+			if Aimbot and targetPos then
+				Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPos)
+			end
+		else
+			SilentTargetPos = nil
+		end
+
+		-- Skip player ESP/Tracer loop completely when disabled
+		if not (ESP or Tracers) then
+			return
+		end
+
 		local localRoot = char and char:FindFirstChild("HumanoidRootPart")
-		local tracerOrigin = Vector2.new(vp.X * 0.5, vp.Y)
+		local tracerOrigin = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y)
 
 		for _, p in ipairs(Players:GetPlayers()) do
-			local pChar = (p ~= LocalPlayer) and p.Character or nil
-			local hrp = pChar and pChar:FindFirstChild("HumanoidRootPart")
-			local hum = pChar and pChar:FindFirstChildOfClass("Humanoid")
-			local validAlive = (hrp and hum and hum.Health > 0)
+			if p ~= LocalPlayer and p.Character then
+				local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+				local hum = p.Character:FindFirstChildOfClass("Humanoid")
+				local validAlive = (hrp and hum and hum.Health > 0)
 
-			local rootPos, onScreen, topPos, bottomPos, width, height
-			if validAlive then
-				rootPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-				if onScreen and rootPos.Z > 0 then
-					topPos = Camera:WorldToViewportPoint(hrp.Position + Vector3.new(0, 3, 0))
-					bottomPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3.5, 0))
-					height = math.clamp(math.abs(bottomPos.Y - topPos.Y), 14, 600)
-					width = math.clamp(height * 0.55, 10, 400)
-				else
-					onScreen = false
-				end
-			end
-
-			if ESP then
-				if not ESPCache[p] then
-					ESPCache[p] = createESPObjects()
-				end
-				local entry = ESPCache[p]
-				if validAlive and onScreen then
-					local boxX = rootPos.X - (width * 0.5)
-					local boxY = topPos.Y
-					entry.Box.Size = Vector2.new(width, height)
-					entry.Box.Position = Vector2.new(boxX, boxY)
-					entry.Box.Visible = true
-
-					local distText = ""
-					if localRoot then
-						distText = " [" .. tostring(math.floor((localRoot.Position - hrp.Position).Magnitude)) .. "m]"
+				local rootPos, onScreen, topPos, bottomPos, width, height
+				if validAlive then
+					rootPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+					topPos = Camera:WorldToViewportPoint((hrp.CFrame * CFrame.new(0, 3, 0)).Position)
+					bottomPos = Camera:WorldToViewportPoint((hrp.CFrame * CFrame.new(0, -3.5, 0)).Position)
+					if onScreen and rootPos.Z > 0 then
+						height = math.clamp(math.abs(bottomPos.Y - topPos.Y), 14, 600)
+						width = math.clamp(height * 0.55, 10, 400)
+					else
+						onScreen = false
 					end
-					entry.Label.Text = p.Name .. distText
-					entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 14, 4))
-					entry.Label.Visible = true
-				else
-					entry.Box.Visible = false
-					entry.Label.Visible = false
 				end
-			elseif ESPCache[p] then
-				ESPCache[p].Box.Visible = false
-				ESPCache[p].Label.Visible = false
-			end
 
-			if Tracers then
-				if not TracerCache[p] then
-					TracerCache[p] = createTracerLine()
+				if ESP then
+					if not ESPCache[p] then
+						ESPCache[p] = createESPObjects()
+					end
+					local entry = ESPCache[p]
+					if validAlive and onScreen then
+						local boxX = rootPos.X - (width * 0.5)
+						local boxY = topPos.Y
+
+						entry.Box.Size = Vector2.new(width, height)
+						entry.Box.Position = Vector2.new(boxX, boxY)
+						entry.Box.Visible = true
+
+						local distText = ""
+						if localRoot then
+							local studs = math.floor((localRoot.Position - hrp.Position).Magnitude)
+							distText = " [" .. tostring(studs) .. "m]"
+						end
+
+						entry.Label.Text = p.Name .. distText
+						entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 14, 4))
+						entry.Label.Visible = true
+					else
+						entry.Box.Visible = false
+						entry.Label.Visible = false
+					end
+				elseif ESPCache[p] then
+					ESPCache[p].Box.Visible = false
+					ESPCache[p].Label.Visible = false
 				end
-				local line = TracerCache[p]
-				if validAlive and onScreen then
-					line.From = tracerOrigin
-					line.To = Vector2.new(rootPos.X, bottomPos.Y)
-					line.Visible = true
-				else
-					line.Visible = false
+
+				if Tracers then
+					if not TracerCache[p] then
+						TracerCache[p] = createTracerLine()
+					end
+					local line = TracerCache[p]
+					if validAlive and onScreen then
+						line.From = tracerOrigin
+						line.To = Vector2.new(rootPos.X, bottomPos.Y)
+						line.Visible = true
+					else
+						line.Visible = false
+					end
+				elseif TracerCache[p] then
+					TracerCache[p].Visible = false
 				end
-			elseif TracerCache[p] then
-				TracerCache[p].Visible = false
+			else
+				if ESPCache[p] then
+					ESPCache[p].Box.Visible = false
+					ESPCache[p].Label.Visible = false
+				end
+				if TracerCache[p] then
+					TracerCache[p].Visible = false
+				end
 			end
 		end
-	end
-end)
+	end)
+end
