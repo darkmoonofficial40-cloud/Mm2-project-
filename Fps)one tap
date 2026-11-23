@@ -15,6 +15,8 @@ local Aimbot = false
 local SilentAim = false
 local SilentHitChance = 100
 local AimFOV = 150
+local SpeedEnabled = false
+local JumpEnabled = false
 local SpeedValue = 16
 local JumpValue = 45
 local Noclip = false
@@ -26,12 +28,20 @@ local RainbowFOV = false
 local BulletSpeed = 2500
 local Prediction = true
 
+local DefaultWalkSpeed = 16
+local DefaultJumpPower = 45
+
 local PanelWidth = 430
 local BaseWidth = 430
 local BaseHeight = 290
 local AspectRatio = BaseHeight / BaseWidth
 
 local DiscordLink = "https://discord.gg/QxRKp9wNeE"
+
+local CS2_Red = Color3.fromRGB(239, 68, 68)
+local CS2_White = Color3.fromRGB(255, 255, 255)
+local CS2_Green = Color3.fromRGB(34, 197, 94)
+local CS2_Outline = Color3.fromRGB(10, 12, 18)
 
 local Circle = Drawing.new("Circle")
 Circle.Visible = false
@@ -60,37 +70,15 @@ local TracerCache = {}
 local SavedCollide = {}
 local SilentTargetPos = nil
 
--- CS2 & Skeleton ESP Color Palette
-local CS2_BOX_COLOR = Color3.fromRGB(129, 140, 248)
-local CS2_HP_BG_COLOR = Color3.fromRGB(15, 23, 42)
-local SKELETON_BONE_SPECS = {
-	{key = "Spine",      a = {"Head"},               b = {"UpperTorso", "Torso"},      color = Color3.fromRGB(56, 189, 248)},
-	{key = "TorsoMid",   a = {"UpperTorso", "Torso"},b = {"LowerTorso", "HumanoidRootPart"}, color = Color3.fromRGB(168, 85, 247)},
-	{key = "LeftArm",    a = {"UpperTorso", "Torso"},b = {"LeftUpperArm", "Left Arm"},  color = Color3.fromRGB(52, 211, 153)},
-	{key = "LeftFore",   a = {"LeftUpperArm"},       b = {"LeftLowerArm"},               color = Color3.fromRGB(45, 212, 191)},
-	{key = "LeftHand",   a = {"LeftLowerArm"},       b = {"LeftHand"},                   color = Color3.fromRGB(103, 232, 249)},
-	{key = "RightArm",   a = {"UpperTorso", "Torso"},b = {"RightUpperArm", "Right Arm"},color = Color3.fromRGB(251, 191, 36)},
-	{key = "RightFore",  a = {"RightUpperArm"},      b = {"RightLowerArm"},              color = Color3.fromRGB(251, 146, 60)},
-	{key = "RightHand",  a = {"RightLowerArm"},      b = {"RightHand"},                  color = Color3.fromRGB(253, 224, 71)},
-	{key = "LeftLeg",    a = {"LowerTorso", "Torso"},b = {"LeftUpperLeg", "Left Leg"},  color = Color3.fromRGB(244, 114, 182)},
-	{key = "LeftShin",   a = {"LeftUpperLeg"},       b = {"LeftLowerLeg"},               color = Color3.fromRGB(251, 113, 133)},
-	{key = "LeftFoot",   a = {"LeftLowerLeg"},       b = {"LeftFoot"},                   color = Color3.fromRGB(249, 168, 212)},
-	{key = "RightLeg",   a = {"LowerTorso", "Torso"},b = {"RightUpperLeg", "Right Leg"},color = Color3.fromRGB(129, 140, 248)},
-	{key = "RightShin",  a = {"RightUpperLeg"},      b = {"RightLowerLeg"},              color = Color3.fromRGB(192, 132, 252)},
-	{key = "RightFoot",  a = {"RightLowerLeg"},      b = {"RightFoot"},                  color = Color3.fromRGB(165, 180, 252)}
-}
-
-local function findFirstPart(character, names)
-	if not character then
-		return nil
+local function makeLine(color, thickness, zIndex)
+	local line = Drawing.new("Line")
+	line.Visible = false
+	line.Color = color
+	line.Thickness = thickness or 1.5
+	if zIndex and line.ZIndex ~= nil then
+		line.ZIndex = zIndex
 	end
-	for _, n in ipairs(names) do
-		local part = character:FindFirstChild(n)
-		if part and part:IsA("BasePart") then
-			return part
-		end
-	end
-	return nil
+	return line
 end
 
 local function createESPObjects()
@@ -98,26 +86,26 @@ local function createESPObjects()
 	box.Visible = false
 	box.Thickness = 1.6
 	box.Filled = false
-	box.Color = CS2_BOX_COLOR
+	box.Color = CS2_Red
 
 	local hpBg = Drawing.new("Line")
 	hpBg.Visible = false
-	hpBg.Thickness = 4
-	hpBg.Color = CS2_HP_BG_COLOR
+	hpBg.Thickness = 3.5
+	hpBg.Color = CS2_Outline
 
 	local hpBar = Drawing.new("Line")
 	hpBar.Visible = false
-	hpBar.Thickness = 2.4
-	hpBar.Color = Color3.fromRGB(34, 197, 94)
+	hpBar.Thickness = 2.2
+	hpBar.Color = CS2_Green
 
 	local label = Drawing.new("Text")
 	label.Visible = false
 	label.Center = true
 	label.Outline = true
-	label.OutlineColor = Color3.fromRGB(10, 12, 18)
-	label.Color = Color3.fromRGB(248, 250, 252)
-	label.Size = 11
-	label.Font = 2
+	label.OutlineColor = CS2_Outline
+	label.Color = CS2_White
+	label.Size = 12
+	label.Font = 3
 
 	return {
 		Box = box,
@@ -128,9 +116,7 @@ local function createESPObjects()
 end
 
 local function hideESPEntry(entry)
-	if not entry then
-		return
-	end
+	if not entry then return end
 	if entry.Box then entry.Box.Visible = false end
 	if entry.HpBg then entry.HpBg.Visible = false end
 	if entry.HpBar then entry.HpBar.Visible = false end
@@ -138,14 +124,11 @@ local function hideESPEntry(entry)
 end
 
 local function removeESPEntry(entry)
-	if not entry then
-		return
-	end
-	for _, obj in pairs(entry) do
-		if obj then
-			pcall(function() obj:Remove() end)
-		end
-	end
+	if not entry then return end
+	if entry.Box then pcall(function() entry.Box:Remove() end) end
+	if entry.HpBg then pcall(function() entry.HpBg:Remove() end) end
+	if entry.HpBar then pcall(function() entry.HpBar:Remove() end) end
+	if entry.Label then pcall(function() entry.Label:Remove() end) end
 end
 
 local function clearESP()
@@ -155,34 +138,26 @@ local function clearESP()
 	end
 end
 
-local function createSkeletonEntry()
-	local lines = {}
-	for _, spec in ipairs(SKELETON_BONE_SPECS) do
-		local line = Drawing.new("Line")
-		line.Visible = false
-		line.Thickness = 1.8
-		line.Color = spec.color
-		lines[spec.key] = line
+local function createSkeletonObjects(maxBones)
+	local bones = {}
+	for i = 1, maxBones do
+		bones[i] = makeLine(CS2_Red, 1.5, 2)
 	end
-	return lines
+	return bones
 end
 
-local function hideSkeletonEntry(lines)
-	if not lines then
-		return
-	end
-	for _, line in pairs(lines) do
+local function hideSkeleton(bones)
+	if not bones then return end
+	for _, line in ipairs(bones) do
 		if line then
 			line.Visible = false
 		end
 	end
 end
 
-local function removeSkeletonEntry(lines)
-	if not lines then
-		return
-	end
-	for _, line in pairs(lines) do
+local function removeSkeleton(bones)
+	if not bones then return end
+	for _, line in ipairs(bones) do
 		if line then
 			pcall(function() line:Remove() end)
 		end
@@ -190,8 +165,8 @@ local function removeSkeletonEntry(lines)
 end
 
 local function clearSkeletons()
-	for player, lines in pairs(SkeletonCache) do
-		removeSkeletonEntry(lines)
+	for player, bones in pairs(SkeletonCache) do
+		removeSkeleton(bones)
 		SkeletonCache[player] = nil
 	end
 end
@@ -200,7 +175,7 @@ local function createTracerLine()
 	local line = Drawing.new("Line")
 	line.Visible = false
 	line.Thickness = 1.4
-	line.Color = Color3.fromRGB(165, 180, 252)
+	line.Color = CS2_Red
 	return line
 end
 
@@ -224,13 +199,32 @@ local function restoreCharacterCollisions()
 	end
 end
 
+local function applyCharacterMovement(char)
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+
+	local targetSpeed = SpeedEnabled and SpeedValue or DefaultWalkSpeed
+	if hum.WalkSpeed ~= targetSpeed then
+		hum.WalkSpeed = targetSpeed
+	end
+
+	if not hum.UseJumpPower then
+		hum.UseJumpPower = true
+	end
+	local targetJump = JumpEnabled and JumpValue or DefaultJumpPower
+	if hum.JumpPower ~= targetJump then
+		hum.JumpPower = targetJump
+	end
+end
+
 Players.PlayerRemoving:Connect(function(player)
 	if ESPCache[player] then
 		removeESPEntry(ESPCache[player])
 		ESPCache[player] = nil
 	end
 	if SkeletonCache[player] then
-		removeSkeletonEntry(SkeletonCache[player])
+		removeSkeleton(SkeletonCache[player])
 		SkeletonCache[player] = nil
 	end
 	if TracerCache[player] then
@@ -298,28 +292,14 @@ local function getClosestTarget(screenCenter)
 	return aimPosition
 end
 
--- Empowered Hit Chance: boosts effective conversion curve for stronger consistency above 0%
-local function getEffectiveHitChance()
-	if SilentHitChance >= 100 then
-		return 100
-	end
-	if SilentHitChance <= 0 then
-		return 0
-	end
-	local norm = SilentHitChance / 100
-	local boosted = math.pow(norm, 0.55) * 100
-	return math.clamp(boosted, 10, 99.5)
-end
-
 local function rollSilentHitChance()
-	local eff = getEffectiveHitChance()
-	if eff >= 100 then
+	if SilentHitChance >= 100 then
 		return true
 	end
-	if eff <= 0 then
+	if SilentHitChance <= 0 then
 		return false
 	end
-	return (math.random() * 100) <= eff
+	return math.random(1, 100) <= SilentHitChance
 end
 
 -- Safe Silent Aim __namecall Hook (when supported by executor)
@@ -428,23 +408,114 @@ local function joinAnotherServer(statusCallback)
 	end)
 end
 
-local function getHealthColor(ratio)
-	ratio = math.clamp(ratio, 0, 1)
-	if ratio > 0.5 then
-		local t = (ratio - 0.5) * 2
-		return Color3.fromRGB(
-			math.floor(250 - (216 * t)),
-			math.floor(204 + (0 * t)),
-			math.floor(21 + (73 * t))
-		)
-	else
-		local t = ratio * 2
-		return Color3.fromRGB(
-			239,
-			math.floor(68 + (136 * t)),
-			math.floor(68 - (47 * t))
-		)
+-- Build Skeleton Joint Pairs (supports R15 and R6)
+local function buildCharacterBones(char)
+	local pairsList = {}
+	local head = char:FindFirstChild("Head")
+	local upperTorso = char:FindFirstChild("UpperTorso")
+	local lowerTorso = char:FindFirstChild("LowerTorso")
+	local torso = char:FindFirstChild("Torso")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+
+	if upperTorso and lowerTorso then
+		local neckPos = head and head.Position or (upperTorso.CFrame * CFrame.new(0, 0.6, 0)).Position
+		local shoulderPos = upperTorso.Position
+		local hipPos = lowerTorso.Position
+
+		local lUpperArm = char:FindFirstChild("LeftUpperArm")
+		local lLowerArm = char:FindFirstChild("LeftLowerArm")
+		local lHand = char:FindFirstChild("LeftHand")
+
+		local rUpperArm = char:FindFirstChild("RightUpperArm")
+		local rLowerArm = char:FindFirstChild("RightLowerArm")
+		local rHand = char:FindFirstChild("RightHand")
+
+		local lUpperLeg = char:FindFirstChild("LeftUpperLeg")
+		local lLowerLeg = char:FindFirstChild("LeftLowerLeg")
+		local lFoot = char:FindFirstChild("LeftFoot")
+
+		local rUpperLeg = char:FindFirstChild("RightUpperLeg")
+		local rLowerLeg = char:FindFirstChild("RightLowerLeg")
+		local rFoot = char:FindFirstChild("RightFoot")
+
+		table.insert(pairsList, {neckPos, shoulderPos})
+		table.insert(pairsList, {shoulderPos, hipPos})
+
+		if lUpperArm then
+			table.insert(pairsList, {shoulderPos, lUpperArm.Position})
+			if lLowerArm then
+				table.insert(pairsList, {lUpperArm.Position, lLowerArm.Position})
+				if lHand then
+					table.insert(pairsList, {lLowerArm.Position, lHand.Position})
+				end
+			end
+		end
+
+		if rUpperArm then
+			table.insert(pairsList, {shoulderPos, rUpperArm.Position})
+			if rLowerArm then
+				table.insert(pairsList, {rUpperArm.Position, rLowerArm.Position})
+				if rHand then
+					table.insert(pairsList, {rLowerArm.Position, rHand.Position})
+				end
+			end
+		end
+
+		if lUpperLeg then
+			table.insert(pairsList, {hipPos, lUpperLeg.Position})
+			if lLowerLeg then
+				table.insert(pairsList, {lUpperLeg.Position, lLowerLeg.Position})
+				if lFoot then
+					table.insert(pairsList, {lLowerLeg.Position, lFoot.Position})
+				end
+			end
+		end
+
+		if rUpperLeg then
+			table.insert(pairsList, {hipPos, rUpperLeg.Position})
+			if rLowerLeg then
+				table.insert(pairsList, {rUpperLeg.Position, rLowerLeg.Position})
+				if rFoot then
+					table.insert(pairsList, {rLowerLeg.Position, rFoot.Position})
+				end
+			end
+		end
+	elseif torso then
+		local neckPos = head and head.Position or (torso.CFrame * CFrame.new(0, 1.2, 0)).Position
+		local topSpine = (torso.CFrame * CFrame.new(0, 0.65, 0)).Position
+		local botSpine = (torso.CFrame * CFrame.new(0, -0.75, 0)).Position
+
+		local lArm = char:FindFirstChild("Left Arm")
+		local rArm = char:FindFirstChild("Right Arm")
+		local lLeg = char:FindFirstChild("Left Leg")
+		local rLeg = char:FindFirstChild("Right Leg")
+
+		table.insert(pairsList, {neckPos, topSpine})
+		table.insert(pairsList, {topSpine, botSpine})
+
+		if lArm then
+			table.insert(pairsList, {topSpine, (lArm.CFrame * CFrame.new(0, 0.5, 0)).Position})
+			table.insert(pairsList, {(lArm.CFrame * CFrame.new(0, 0.5, 0)).Position, (lArm.CFrame * CFrame.new(0, -0.8, 0)).Position})
+		end
+		if rArm then
+			table.insert(pairsList, {topSpine, (rArm.CFrame * CFrame.new(0, 0.5, 0)).Position})
+			table.insert(pairsList, {(rArm.CFrame * CFrame.new(0, 0.5, 0)).Position, (rArm.CFrame * CFrame.new(0, -0.8, 0)).Position})
+		end
+		if lLeg then
+			table.insert(pairsList, {botSpine, (lLeg.CFrame * CFrame.new(0, 0.5, 0)).Position})
+			table.insert(pairsList, {(lLeg.CFrame * CFrame.new(0, 0.5, 0)).Position, (lLeg.CFrame * CFrame.new(0, -0.85, 0)).Position})
+		end
+		if rLeg then
+			table.insert(pairsList, {botSpine, (rLeg.CFrame * CFrame.new(0, 0.5, 0)).Position})
+			table.insert(pairsList, {(rLeg.CFrame * CFrame.new(0, 0.5, 0)).Position, (rLeg.CFrame * CFrame.new(0, -0.85, 0)).Position})
+		end
+	elseif hrp then
+		local topPt = (hrp.CFrame * CFrame.new(0, 2.2, 0)).Position
+		local botPt = (hrp.CFrame * CFrame.new(0, -2.2, 0)).Position
+		table.insert(pairsList, {topPt, botPt})
 	end
+
+	return pairsList
 end
 
 -- Modern UI Construction (DARK MOON by biyxznd)
@@ -581,7 +652,7 @@ TitleText.Position = UDim2.new(0, 28, 0, 0)
 TitleText.BackgroundTransparency = 1
 TitleText.Text = "DARK MOON"
 TitleText.TextColor3 = Color3.fromRGB(248, 250, 252)
-TitleText.Font = Enum.Font.GothamBold
+TitleText.Font = Enum.Font.GothamBlack
 TitleText.TextSize = 14
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = Header
@@ -592,7 +663,7 @@ SubText.Position = UDim2.new(1, -152, 0, 0)
 SubText.BackgroundTransparency = 1
 SubText.Text = "by biyxznd"
 SubText.TextColor3 = Color3.fromRGB(148, 163, 184)
-SubText.Font = Enum.Font.GothamMedium
+SubText.Font = Enum.Font.GothamBold
 SubText.TextSize = 11
 SubText.TextXAlignment = Enum.TextXAlignment.Right
 SubText.Parent = Header
@@ -759,7 +830,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 	lbl.BackgroundTransparency = 1
 	lbl.Text = labelText
 	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-	lbl.Font = Enum.Font.GothamMedium
+	lbl.Font = Enum.Font.GothamBold
 	lbl.TextSize = 12
 	lbl.TextXAlignment = Enum.TextXAlignment.Left
 	lbl.Parent = row
@@ -824,7 +895,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 	title.BackgroundTransparency = 1
 	title.Text = labelText
 	title.TextColor3 = Color3.fromRGB(226, 232, 240)
-	title.Font = Enum.Font.GothamMedium
+	title.Font = Enum.Font.GothamBold
 	title.TextSize = 12
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = frame
@@ -835,7 +906,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 	valLabel.BackgroundTransparency = 1
 	valLabel.Text = tostring(value)
 	valLabel.TextColor3 = Color3.fromRGB(129, 140, 248)
-	valLabel.Font = Enum.Font.GothamBold
+	valLabel.Font = Enum.Font.GothamBlack
 	valLabel.TextSize = 12
 	valLabel.TextXAlignment = Enum.TextXAlignment.Right
 	valLabel.Parent = frame
@@ -910,7 +981,7 @@ local function addButton(page, labelText, btnText, callback)
 	lbl.BackgroundTransparency = 1
 	lbl.Text = labelText
 	lbl.TextColor3 = Color3.fromRGB(226, 232, 240)
-	lbl.Font = Enum.Font.GothamMedium
+	lbl.Font = Enum.Font.GothamBold
 	lbl.TextSize = 12
 	lbl.TextXAlignment = Enum.TextXAlignment.Left
 	lbl.Parent = row
@@ -977,12 +1048,28 @@ addToggle(CombatTab, "Rainbow FOV", false, function(v)
 	RainbowFOV = v
 end)
 
+addToggle(MoveTab, "Speed Hack", false, function(v)
+	SpeedEnabled = v
+	applyCharacterMovement(LocalPlayer.Character)
+end)
+
 addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
 	SpeedValue = v
+	if SpeedEnabled then
+		applyCharacterMovement(LocalPlayer.Character)
+	end
+end)
+
+addToggle(MoveTab, "Jump Hack", false, function(v)
+	JumpEnabled = v
+	applyCharacterMovement(LocalPlayer.Character)
 end)
 
 addSlider(MoveTab, "Jump", 45, 150, 5, 45, function(v)
 	JumpValue = v
+	if JumpEnabled then
+		applyCharacterMovement(LocalPlayer.Character)
+	end
 end)
 
 addToggle(MoveTab, "Noclip", false, function(v)
@@ -1186,18 +1273,7 @@ do
 		-- Movement & Throttled Noclip
 		local char = LocalPlayer.Character
 		if char then
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if hum then
-				if hum.WalkSpeed ~= SpeedValue then
-					hum.WalkSpeed = SpeedValue
-				end
-				if not hum.UseJumpPower then
-					hum.UseJumpPower = true
-				end
-				if hum.JumpPower ~= JumpValue then
-					hum.JumpPower = JumpValue
-				end
-			end
+			applyCharacterMovement(char)
 
 			if Noclip then
 				noclipElapsed += dt
@@ -1256,20 +1332,14 @@ do
 		if Aimbot or SilentAim then
 			local targetPos = getClosestTarget(screenCenter)
 			SilentTargetPos = SilentAim and targetPos or nil
-			if targetPos then
-				if Aimbot then
-					Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPos)
-				elseif SilentAim and SilentHitChance > 0 then
-					local pullAlpha = math.clamp((getEffectiveHitChance() / 100) * 0.22, 0.04, 0.22)
-					local desiredCF = CFrame.new(Camera.CFrame.Position, targetPos)
-					Camera.CFrame = Camera.CFrame:Lerp(desiredCF, pullAlpha)
-				end
+			if Aimbot and targetPos then
+				Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetPos)
 			end
 		else
 			SilentTargetPos = nil
 		end
 
-		-- Skip player ESP/Skeleton/Tracer loop completely when disabled
+		-- Skip player visual loop completely when disabled
 		if not (ESP or SkeletonESP or Tracers) then
 			return
 		end
@@ -1296,7 +1366,7 @@ do
 				end
 			end
 
-			-- CS2 ESP (Box + Left Health Bar + Top Name & Distance)
+			-- CS2 Box + Green HP Line + White Name & Distance
 			if ESP then
 				if not ESPCache[p] then
 					ESPCache[p] = createESPObjects()
@@ -1305,20 +1375,24 @@ do
 				if validAlive and onScreen then
 					local boxX = rootPos.X - (width * 0.5)
 					local boxY = topPos.Y
-					local hpRatio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-					local barX = boxX - 5
 
 					entry.Box.Size = Vector2.new(width, height)
 					entry.Box.Position = Vector2.new(boxX, boxY)
+					entry.Box.Color = CS2_Red
 					entry.Box.Visible = true
 
-					entry.HpBg.From = Vector2.new(barX, boxY)
-					entry.HpBg.To = Vector2.new(barX, boxY + height)
+					local hpRatio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+					local hpX = math.max(boxX - 5, 2)
+					local hpBottomY = boxY + height
+					local hpTopY = hpBottomY - (height * hpRatio)
+
+					entry.HpBg.From = Vector2.new(hpX, boxY)
+					entry.HpBg.To = Vector2.new(hpX, hpBottomY)
 					entry.HpBg.Visible = true
 
-					entry.HpBar.Color = getHealthColor(hpRatio)
-					entry.HpBar.From = Vector2.new(barX, boxY + height - (height * hpRatio))
-					entry.HpBar.To = Vector2.new(barX, boxY + height)
+					entry.HpBar.From = Vector2.new(hpX, hpBottomY)
+					entry.HpBar.To = Vector2.new(hpX, hpTopY)
+					entry.HpBar.Color = CS2_Green
 					entry.HpBar.Visible = true
 
 					local distText = ""
@@ -1327,8 +1401,9 @@ do
 						distText = " [" .. tostring(studs) .. "m]"
 					end
 
-					entry.Label.Text = string.format("%s%s (%dHP)", p.Name, distText, math.floor(hum.Health + 0.5))
-					entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 14, 4))
+					entry.Label.Text = p.Name .. distText
+					entry.Label.Color = CS2_White
+					entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 15, 4))
 					entry.Label.Visible = true
 				else
 					hideESPEntry(entry)
@@ -1337,23 +1412,30 @@ do
 				hideESPEntry(ESPCache[p])
 			end
 
-			-- Multi-Color Skeleton ESP (R15 & R6 compatible)
+			-- Skeleton ESP (Red Bones)
 			if SkeletonESP then
-				if not SkeletonCache[p] then
-					SkeletonCache[p] = createSkeletonEntry()
-				end
-				local skel = SkeletonCache[p]
 				if validAlive and onScreen then
-					for _, spec in ipairs(SKELETON_BONE_SPECS) do
-						local line = skel[spec.key]
-						local partA = findFirstPart(pChar, spec.a)
-						local partB = findFirstPart(pChar, spec.b)
-						if partA and partB then
-							local posA, visA = Camera:WorldToViewportPoint(partA.Position)
-							local posB, visB = Camera:WorldToViewportPoint(partB.Position)
-							if visA and visB and posA.Z > 0 and posB.Z > 0 then
-								line.From = Vector2.new(posA.X, posA.Y)
-								line.To = Vector2.new(posB.X, posB.Y)
+					local bonePairs = buildCharacterBones(pChar)
+					local needed = #bonePairs
+					if not SkeletonCache[p] then
+						SkeletonCache[p] = createSkeletonObjects(needed)
+					elseif #SkeletonCache[p] < needed then
+						for idx = #SkeletonCache[p] + 1, needed do
+							SkeletonCache[p][idx] = makeLine(CS2_Red, 1.5, 2)
+						end
+					end
+
+					local lines = SkeletonCache[p]
+					for idx = 1, #lines do
+						local line = lines[idx]
+						local pair = bonePairs[idx]
+						if pair then
+							local p1Screen, vis1 = Camera:WorldToViewportPoint(pair[1])
+							local p2Screen, vis2 = Camera:WorldToViewportPoint(pair[2])
+							if vis1 and vis2 and p1Screen.Z > 0 and p2Screen.Z > 0 then
+								line.From = Vector2.new(p1Screen.X, p1Screen.Y)
+								line.To = Vector2.new(p2Screen.X, p2Screen.Y)
+								line.Color = CS2_Red
 								line.Visible = true
 							else
 								line.Visible = false
@@ -1362,11 +1444,11 @@ do
 							line.Visible = false
 						end
 					end
-				else
-					hideSkeletonEntry(skel)
+				elseif SkeletonCache[p] then
+					hideSkeleton(SkeletonCache[p])
 				end
 			elseif SkeletonCache[p] then
-				hideSkeletonEntry(SkeletonCache[p])
+				hideSkeleton(SkeletonCache[p])
 			end
 
 			-- Tracers
@@ -1378,6 +1460,7 @@ do
 				if validAlive and onScreen then
 					line.From = tracerOrigin
 					line.To = Vector2.new(rootPos.X, bottomPos.Y)
+					line.Color = CS2_Red
 					line.Visible = true
 				else
 					line.Visible = false
