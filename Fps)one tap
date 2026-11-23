@@ -9,7 +9,6 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
@@ -21,8 +20,6 @@ local AimFOV = 150
 local SpeedValue = 16
 local JumpValue = 25
 local Noclip = false
-local UnlimitedMoney = false
-local BypassCasesOpen = false
 local ESP = false
 local SkeletonESP = false
 local Tracers = false
@@ -30,13 +27,14 @@ local Crosshair = false
 local HDGraphics = false
 local RainbowFOV = false
 local AutoPanelColour = false
+local PhoneEcoMode = false
 local BulletSpeed = 2500
 local Prediction = true
 
 local ToggleKeybind = Enum.KeyCode.RightShift
 local listeningForMainKeybind = false
 local activeFeatureBindSlot = nil
-local featureKeybinds = {} -- [KeyCode] = bindEntry
+local featureKeybinds = {}
 
 local PanelWidth = 430
 local BaseWidth = 430
@@ -150,6 +148,36 @@ local PanelThemes = {
 
 local currentThemeIndex = 1
 local ActiveTheme = PanelThemes[currentThemeIndex]
+
+local Circle = Drawing.new("Circle")
+Circle.Visible = false
+Circle.Thickness = 2
+Circle.Filled = false
+Circle.Color = ActiveTheme.Accent
+
+local GlowCircle = Drawing.new("Circle")
+GlowCircle.Visible = false
+GlowCircle.Thickness = 6
+GlowCircle.Transparency = 0.3
+GlowCircle.Filled = false
+GlowCircle.Color = ActiveTheme.Accent
+
+local CrosshairH = Drawing.new("Line")
+CrosshairH.Visible = false
+CrosshairH.Thickness = 1.6
+CrosshairH.Color = ActiveTheme.Fill
+
+local CrosshairV = Drawing.new("Line")
+CrosshairV.Visible = false
+CrosshairV.Thickness = 1.6
+CrosshairV.Color = ActiveTheme.Fill
+
+local function syncFovColorWithTheme()
+	if not RainbowFOV then
+		Circle.Color = ActiveTheme.Accent
+		GlowCircle.Color = ActiveTheme.Accent
+	end
+end
 
 local savedLightingProps = nil
 local createdHDEffects = {}
@@ -267,179 +295,42 @@ local function setHDGraphics(enabled)
 	end
 end
 
-local moneyKeywords = {
-	"money", "cash", "coin", "coins", "gold", "gem", "gems",
-	"token", "tokens", "credit", "credits", "balance", "wallet",
-	"dollar", "dollars", "bucks", "point", "points"
-}
+-- Cached Local Character References (avoids per-frame FindFirstChild overhead on mobile)
+local cachedChar = nil
+local cachedHum = nil
+local cachedRoot = nil
 
-local function matchesMoneyName(nameStr)
-	if typeof(nameStr) ~= "string" then
-		return false
+local function refreshLocalCharCache(char)
+	cachedChar = char
+	cachedHum = char and char:FindFirstChildOfClass("Humanoid") or nil
+	cachedRoot = char and char:FindFirstChild("HumanoidRootPart") or nil
+	if char and not cachedHum then
+		char.ChildAdded:Connect(function(child)
+			if child:IsA("Humanoid") then
+				cachedHum = child
+			elseif child.Name == "HumanoidRootPart" then
+				cachedRoot = child
+			end
+		end)
 	end
-	local lower = string.lower(nameStr)
-	for _, kw in ipairs(moneyKeywords) do
-		if string.find(lower, kw, 1, true) then
-			return true
-		end
-	end
-	return false
 end
 
-local function applyUnlimitedMoneyStep()
-	if not LocalPlayer then
-		return
-	end
-	local targetAmount = 999999999
+if LocalPlayer and LocalPlayer.Character then
+	refreshLocalCharCache(LocalPlayer.Character)
+end
 
-	local containers = {
-		LocalPlayer:FindFirstChild("leaderstats"),
-		LocalPlayer:FindFirstChild("Data"),
-		LocalPlayer:FindFirstChild("Stats"),
-		LocalPlayer:FindFirstChild("PlayerData"),
-		LocalPlayer:FindFirstChild("Inventory")
-	}
-
-	for _, folder in ipairs(containers) do
-		if folder then
-			for _, obj in ipairs(folder:GetDescendants()) do
-				if (obj:IsA("IntValue") or obj:IsA("NumberValue")) and matchesMoneyName(obj.Name) then
-					pcall(function()
-						obj.Value = targetAmount
-					end)
-				end
-			end
-		end
-	end
-
-	for _, child in ipairs(LocalPlayer:GetChildren()) do
-		if (child:IsA("IntValue") or child:IsA("NumberValue")) and matchesMoneyName(child.Name) then
-			pcall(function()
-				child.Value = targetAmount
-			end)
-		end
-	end
-
-	pcall(function()
-		local attrs = LocalPlayer:GetAttributes()
-		if typeof(attrs) == "table" then
-			for attrName, attrVal in pairs(attrs) do
-				if typeof(attrVal) == "number" and matchesMoneyName(attrName) then
-					LocalPlayer:SetAttribute(attrName, targetAmount)
-				end
-			end
-		end
+if LocalPlayer then
+	LocalPlayer.CharacterAdded:Connect(function(char)
+		table.clear(SavedCollide)
+		refreshLocalCharCache(char)
+	end)
+	LocalPlayer.CharacterRemoving:Connect(function()
+		table.clear(SavedCollide)
+		cachedChar = nil
+		cachedHum = nil
+		cachedRoot = nil
 	end)
 end
-
-local caseKeywords = {
-	"case", "cases", "crate", "crates", "box", "boxes",
-	"open", "unlock", "spin", "roll", "chest", "pack"
-}
-
-local function matchesCaseName(nameStr)
-	if typeof(nameStr) ~= "string" then
-		return false
-	end
-	local lower = string.lower(nameStr)
-	for _, kw in ipairs(caseKeywords) do
-		if string.find(lower, kw, 1, true) then
-			return true
-		end
-	end
-	return false
-end
-
-local function clearCooldownAttrs(inst)
-	pcall(function()
-		local attrs = inst:GetAttributes()
-		if typeof(attrs) == "table" then
-			for attrName, attrVal in pairs(attrs) do
-				local low = string.lower(attrName)
-				if string.find(low, "cooldown", 1, true)
-					or string.find(low, "timer", 1, true)
-					or string.find(low, "debounce", 1, true)
-					or string.find(low, "locked", 1, true)
-					or string.find(low, "delay", 1, true)
-				then
-					if typeof(attrVal) == "number" then
-						inst:SetAttribute(attrName, 0)
-					elseif typeof(attrVal) == "boolean" then
-						inst:SetAttribute(attrName, false)
-					end
-				end
-			end
-		end
-	end)
-end
-
-local function applyBypassCasesOpenStep()
-	if LocalPlayer then
-		clearCooldownAttrs(LocalPlayer)
-		local pGui = LocalPlayer:FindFirstChild("PlayerGui")
-		if pGui then
-			for _, guiObj in ipairs(pGui:GetDescendants()) do
-				if (guiObj:IsA("TextButton") or guiObj:IsA("ImageButton")) and matchesCaseName(guiObj.Name) then
-					pcall(function()
-						guiObj.Active = true
-						if guiObj:GetAttribute("Cooldown") ~= nil then
-							guiObj:SetAttribute("Cooldown", 0)
-						end
-						if guiObj:GetAttribute("Locked") ~= nil then
-							guiObj:SetAttribute("Locked", false)
-						end
-					end)
-				end
-			end
-		end
-	end
-
-	local searchRoots = {ReplicatedStorage, workspace}
-	for _, root in ipairs(searchRoots) do
-		if root then
-			for _, desc in ipairs(root:GetDescendants()) do
-				if matchesCaseName(desc.Name) then
-					clearCooldownAttrs(desc)
-					if desc:IsA("RemoteEvent") then
-						pcall(function()
-							desc:FireServer()
-						end)
-					elseif desc:IsA("BindableEvent") then
-						pcall(function()
-							desc:Fire()
-						end)
-					elseif desc:IsA("ProximityPrompt") then
-						pcall(function()
-							desc.HoldDuration = 0
-							desc.Enabled = true
-						end)
-					end
-				end
-			end
-		end
-	end
-end
-
-local Circle = Drawing.new("Circle")
-Circle.Visible = false
-Circle.Thickness = 2
-Circle.Filled = false
-
-local GlowCircle = Drawing.new("Circle")
-GlowCircle.Visible = false
-GlowCircle.Thickness = 6
-GlowCircle.Transparency = 0.3
-GlowCircle.Filled = false
-
-local CrosshairH = Drawing.new("Line")
-CrosshairH.Visible = false
-CrosshairH.Thickness = 1.6
-CrosshairH.Color = Color3.fromRGB(129, 140, 248)
-
-local CrosshairV = Drawing.new("Line")
-CrosshairV.Visible = false
-CrosshairV.Thickness = 1.6
-CrosshairV.Color = Color3.fromRGB(129, 140, 248)
 
 local ESPCache = {}
 local SkeletonCache = {}
@@ -601,7 +492,7 @@ local function WallCheck(position, character)
 	end
 	local origin = cam.CFrame.Position
 	local direction = position - origin
-	sharedRayParams.FilterDescendantsInstances = LocalPlayer.Character and {LocalPlayer.Character} or {}
+	sharedRayParams.FilterDescendantsInstances = cachedChar and {cachedChar} or {}
 	local ray = workspace:Raycast(origin, direction, sharedRayParams)
 	if ray then
 		return ray.Instance:IsDescendantOf(character)
@@ -1487,13 +1378,7 @@ end)
 
 addToggle(CombatTab, "Rainbow FOV", false, function(v)
 	RainbowFOV = v
-end)
-
-addToggle(CombatTab, "Bypass Cases Open", false, function(v)
-	BypassCasesOpen = v
-	if BypassCasesOpen then
-		applyBypassCasesOpenStep()
-	end
+	syncFovColorWithTheme()
 end)
 
 addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
@@ -1508,13 +1393,6 @@ addToggle(MoveTab, "Noclip", false, function(v)
 	Noclip = v
 	if not Noclip then
 		restoreCharacterCollisions()
-	end
-end)
-
-addToggle(MoveTab, "Unlimited Money", false, function(v)
-	UnlimitedMoney = v
-	if UnlimitedMoney then
-		applyUnlimitedMoneyStep()
 	end
 end)
 
@@ -1573,6 +1451,9 @@ local function applyPanelTheme(themeObj)
 	Sidebar.BackgroundColor3 = ActiveTheme.Surface
 	ContentArea.BackgroundColor3 = ActiveTheme.Surface
 	MoonOuterStroke.Color = ActiveTheme.Fill
+	CrosshairH.Color = ActiveTheme.Fill
+	CrosshairV.Color = ActiveTheme.Fill
+	syncFovColorWithTheme()
 
 	if panelColourBtnRef and panelColourBtnRef.Parent then
 		panelColourBtnRef.Text = ActiveTheme.Name
@@ -1602,11 +1483,6 @@ local function applyPanelTheme(themeObj)
 	end
 end
 
-local function stepPanelTheme()
-	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
-	applyPanelTheme(PanelThemes[currentThemeIndex])
-end
-
 local keybindBtnRef = nil
 
 keybindBtnRef = addButton(SettingsTab, "UI Keybind", ToggleKeybind.Name, function(btn)
@@ -1623,11 +1499,16 @@ addButton(SettingsTab, "Click Sound", ActiveClickSound.Name, function(btn)
 end)
 
 panelColourBtnRef = addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, function()
-	stepPanelTheme()
+	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
+	applyPanelTheme(PanelThemes[currentThemeIndex])
 end)
 
 addToggle(SettingsTab, "Auto Colour", false, function(v)
 	AutoPanelColour = v
+end)
+
+addToggle(SettingsTab, "Phone Eco Mode", false, function(v)
+	PhoneEcoMode = v
 end)
 
 addButton(SettingsTab, "Server Hop", "Join Server", function(btn)
@@ -1805,8 +1686,8 @@ do
 	local frameCount = 0
 	local statsElapsed = 0
 	local noclipElapsed = 0
-	local utilityElapsed = 0
 	local autoThemeElapsed = 0
+	local visualStepElapsed = 0
 
 	RunService.RenderStepped:Connect(function(dt)
 		Camera = workspace.CurrentCamera
@@ -1814,10 +1695,23 @@ do
 			return
 		end
 
+		-- Automatic Panel Colour Cycle (syncs FOV colour automatically)
+		if AutoPanelColour then
+			autoThemeElapsed += dt
+			if autoThemeElapsed >= 2.2 then
+				autoThemeElapsed = 0
+				currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
+				applyPanelTheme(PanelThemes[currentThemeIndex])
+			end
+		else
+			autoThemeElapsed = 0
+		end
+
 		-- Throttled Stats Bar Update (reduces mobile UI overhead)
 		frameCount += 1
 		statsElapsed += dt
-		if statsElapsed >= 0.75 then
+		local statsInterval = PhoneEcoMode and 1.1 or 0.75
+		if statsElapsed >= statsInterval then
 			local fps = math.floor((frameCount / statsElapsed) + 0.5)
 			local ping = getPingMs()
 			local activePlayers = #Players:GetPlayers()
@@ -1826,52 +1720,32 @@ do
 			statsElapsed = 0
 		end
 
-		-- Automatic Panel Colour Cycling
-		if AutoPanelColour then
-			autoThemeElapsed += dt
-			if autoThemeElapsed >= 1.6 then
-				autoThemeElapsed = 0
-				stepPanelTheme()
-			end
-		else
-			autoThemeElapsed = 0
+		-- Cached Character Movement & Throttled Noclip
+		if cachedChar and cachedChar.Parent == nil then
+			refreshLocalCharCache(LocalPlayer.Character)
 		end
-
-		-- Throttled Unlimited Money & Bypass Cases Open
-		if UnlimitedMoney or BypassCasesOpen then
-			utilityElapsed += dt
-			if utilityElapsed >= 0.25 then
-				utilityElapsed = 0
-				if UnlimitedMoney then
-					applyUnlimitedMoneyStep()
-				end
-				if BypassCasesOpen then
-					applyBypassCasesOpenStep()
-				end
+		if cachedChar then
+			if not cachedHum or cachedHum.Parent == nil then
+				cachedHum = cachedChar:FindFirstChildOfClass("Humanoid")
 			end
-		end
-
-		-- Movement & Throttled Noclip
-		local char = LocalPlayer.Character
-		if char then
-			local hum = char:FindFirstChildOfClass("Humanoid")
-			if hum then
-				if hum.WalkSpeed ~= SpeedValue then
-					hum.WalkSpeed = SpeedValue
+			if cachedHum then
+				if cachedHum.WalkSpeed ~= SpeedValue then
+					cachedHum.WalkSpeed = SpeedValue
 				end
-				if not hum.UseJumpPower then
-					hum.UseJumpPower = true
+				if not cachedHum.UseJumpPower then
+					cachedHum.UseJumpPower = true
 				end
-				if hum.JumpPower ~= JumpValue then
-					hum.JumpPower = JumpValue
+				if cachedHum.JumpPower ~= JumpValue then
+					cachedHum.JumpPower = JumpValue
 				end
 			end
 
 			if Noclip then
 				noclipElapsed += dt
-				if noclipElapsed >= 0.1 then
+				local noclipInterval = PhoneEcoMode and 0.16 or 0.1
+				if noclipElapsed >= noclipInterval then
 					noclipElapsed = 0
-					for _, desc in ipairs(char:GetDescendants()) do
+					for _, desc in ipairs(cachedChar:GetDescendants()) do
 						if desc:IsA("BasePart") then
 							if SavedCollide[desc] == nil then
 								SavedCollide[desc] = desc.CanCollide
@@ -1901,9 +1775,8 @@ do
 				Circle.Color = col
 				GlowCircle.Color = col
 			else
-				local fovCol = ActiveTheme.Accent
-				Circle.Color = fovCol
-				GlowCircle.Color = fovCol
+				Circle.Color = ActiveTheme.Accent
+				GlowCircle.Color = ActiveTheme.Accent
 			end
 		end
 
@@ -1936,7 +1809,15 @@ do
 			return
 		end
 
-		local localRoot = char and char:FindFirstChild("HumanoidRootPart")
+		if PhoneEcoMode then
+			visualStepElapsed += dt
+			if visualStepElapsed < 0.033 then
+				return
+			end
+			visualStepElapsed = 0
+		end
+
+		local localRoot = cachedRoot and cachedRoot.Parent and cachedRoot or (cachedChar and cachedChar:FindFirstChild("HumanoidRootPart"))
 		local tracerOrigin = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y)
 
 		for _, p in ipairs(Players:GetPlayers()) do
