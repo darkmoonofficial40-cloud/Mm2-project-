@@ -26,7 +26,6 @@ local Tracers = false
 local Crosshair = false
 local HDGraphics = false
 local RainbowFOV = false
-local AutoPanelColour = false
 local PhoneEcoMode = false
 local BulletSpeed = 2500
 local Prediction = true
@@ -220,60 +219,60 @@ local function setHDGraphics(enabled)
 
 		pcall(function()
 			Lighting.GlobalShadows = true
-			Lighting.Brightness = math.clamp(Lighting.Brightness + 0.9, 2.0, 5.0)
-			Lighting.ExposureCompensation = 0.22
-			Lighting.ColorShift_Top = Color3.fromRGB(255, 246, 228)
-			Lighting.Ambient = Color3.fromRGB(62, 68, 86)
-			Lighting.OutdoorAmbient = Color3.fromRGB(122, 132, 156)
-			Lighting.EnvironmentDiffuseScale = 1.0
-			Lighting.EnvironmentSpecularScale = 1.0
+			Lighting.Brightness = math.clamp(Lighting.Brightness + 0.55, 1.6, 3.8)
+			Lighting.ExposureCompensation = 0.12
+			Lighting.ColorShift_Top = Color3.fromRGB(255, 247, 232)
+			Lighting.Ambient = Color3.fromRGB(64, 70, 88)
+			Lighting.OutdoorAmbient = Color3.fromRGB(118, 128, 150)
+			Lighting.EnvironmentDiffuseScale = 0.92
+			Lighting.EnvironmentSpecularScale = 0.88
 		end)
 
 		local bloom = Instance.new("BloomEffect")
-		bloom.Name = "DarkMoon_4KBloom"
+		bloom.Name = "DarkMoon_AestheticBloom"
 		bloom:SetAttribute("DarkMoonHDEffect", true)
-		bloom.Intensity = 0.42
-		bloom.Size = 28
-		bloom.Threshold = 0.98
+		bloom.Intensity = 0.28
+		bloom.Size = 24
+		bloom.Threshold = 1.05
 		bloom.Parent = Lighting
 		table.insert(createdHDEffects, bloom)
 
 		local cc = Instance.new("ColorCorrectionEffect")
-		cc.Name = "DarkMoon_4KColor"
+		cc.Name = "DarkMoon_AestheticColor"
 		cc:SetAttribute("DarkMoonHDEffect", true)
-		cc.Brightness = 0.04
-		cc.Contrast = 0.22
-		cc.Saturation = 0.2
-		cc.TintColor = Color3.fromRGB(254, 252, 255)
+		cc.Brightness = 0.02
+		cc.Contrast = 0.14
+		cc.Saturation = 0.12
+		cc.TintColor = Color3.fromRGB(252, 249, 255)
 		cc.Parent = Lighting
 		table.insert(createdHDEffects, cc)
 
 		local sunRays = Instance.new("SunRaysEffect")
-		sunRays.Name = "DarkMoon_4KSunRays"
+		sunRays.Name = "DarkMoon_AestheticSunRays"
 		sunRays:SetAttribute("DarkMoonHDEffect", true)
-		sunRays.Intensity = 0.12
-		sunRays.Spread = 0.72
+		sunRays.Intensity = 0.09
+		sunRays.Spread = 0.65
 		sunRays.Parent = Lighting
 		table.insert(createdHDEffects, sunRays)
 
 		local dof = Instance.new("DepthOfFieldEffect")
-		dof.Name = "DarkMoon_4KDepth"
+		dof.Name = "DarkMoon_AestheticDepth"
 		dof:SetAttribute("DarkMoonHDEffect", true)
-		dof.FarIntensity = 0.14
-		dof.FocusDistance = 55
-		dof.InFocusRadius = 35
-		dof.NearIntensity = 0.04
+		dof.FarIntensity = 0.08
+		dof.FocusDistance = 75
+		dof.InFocusRadius = 65
+		dof.NearIntensity = 0.02
 		dof.Parent = Lighting
 		table.insert(createdHDEffects, dof)
 
 		if not Lighting:FindFirstChildOfClass("Atmosphere") then
 			local atmo = Instance.new("Atmosphere")
-			atmo.Name = "DarkMoon_4KAtmosphere"
+			atmo.Name = "DarkMoon_AestheticAtmosphere"
 			atmo:SetAttribute("DarkMoonHDEffect", true)
-			atmo.Density = 0.18
-			atmo.Offset = 0.12
-			atmo.Glare = 0.22
-			atmo.Haze = 0.32
+			atmo.Density = 0.16
+			atmo.Offset = 0.1
+			atmo.Glare = 0.18
+			atmo.Haze = 0.28
 			atmo.Parent = Lighting
 			table.insert(createdHDEffects, atmo)
 		end
@@ -1503,10 +1502,6 @@ panelColourBtnRef = addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, fun
 	applyPanelTheme(PanelThemes[currentThemeIndex])
 end)
 
-addToggle(SettingsTab, "Auto Colour", false, function(v)
-	AutoPanelColour = v
-end)
-
 addToggle(SettingsTab, "Phone Eco Mode", false, function(v)
 	PhoneEcoMode = v
 end)
@@ -1686,25 +1681,12 @@ do
 	local frameCount = 0
 	local statsElapsed = 0
 	local noclipElapsed = 0
-	local autoThemeElapsed = 0
 	local visualStepElapsed = 0
 
 	RunService.RenderStepped:Connect(function(dt)
 		Camera = workspace.CurrentCamera
 		if not Camera then
 			return
-		end
-
-		-- Automatic Panel Colour Cycle (syncs FOV colour automatically)
-		if AutoPanelColour then
-			autoThemeElapsed += dt
-			if autoThemeElapsed >= 2.2 then
-				autoThemeElapsed = 0
-				currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
-				applyPanelTheme(PanelThemes[currentThemeIndex])
-			end
-		else
-			autoThemeElapsed = 0
 		end
 
 		-- Throttled Stats Bar Update (reduces mobile UI overhead)
