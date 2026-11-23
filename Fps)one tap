@@ -19,6 +19,7 @@ local SpeedValue = 16
 local JumpValue = 45
 local Noclip = false
 local ESP = false
+local SkeletonESP = false
 local Tracers = false
 local Crosshair = false
 local RainbowFOV = false
@@ -54,14 +55,46 @@ CrosshairV.Thickness = 1.6
 CrosshairV.Color = Color3.fromRGB(129, 140, 248)
 
 local ESPCache = {}
+local SkeletonCache = {}
 local TracerCache = {}
 local SavedCollide = {}
 local SilentTargetPos = nil
 
+local R15_BONES = {
+	{"Head", "UpperTorso"},
+	{"UpperTorso", "LowerTorso"},
+	{"UpperTorso", "LeftUpperArm"},
+	{"LeftUpperArm", "LeftLowerArm"},
+	{"LeftLowerArm", "LeftHand"},
+	{"UpperTorso", "RightUpperArm"},
+	{"RightUpperArm", "RightLowerArm"},
+	{"RightLowerArm", "RightHand"},
+	{"LowerTorso", "LeftUpperLeg"},
+	{"LeftUpperLeg", "LeftLowerLeg"},
+	{"LeftLowerLeg", "LeftFoot"},
+	{"LowerTorso", "RightUpperLeg"},
+	{"RightUpperLeg", "RightLowerLeg"},
+	{"RightLowerLeg", "RightFoot"}
+}
+
+local R6_BONES = {
+	{"Head", "Torso"},
+	{"Torso", "Left Arm"},
+	{"Torso", "Right Arm"},
+	{"Torso", "Left Leg"},
+	{"Torso", "Right Leg"}
+}
+
 local function createESPObjects()
+	local outer = Drawing.new("Square")
+	outer.Visible = false
+	outer.Thickness = 3.2
+	outer.Filled = false
+	outer.Color = Color3.fromRGB(9, 11, 18)
+
 	local box = Drawing.new("Square")
 	box.Visible = false
-	box.Thickness = 1.6
+	box.Thickness = 1.5
 	box.Filled = false
 	box.Color = Color3.fromRGB(129, 140, 248)
 
@@ -75,14 +108,33 @@ local function createESPObjects()
 	label.Font = 2
 
 	return {
+		Outer = outer,
 		Box = box,
 		Label = label
 	}
 end
 
+local function hideESPEntry(entry)
+	if not entry then
+		return
+	end
+	if entry.Outer then
+		entry.Outer.Visible = false
+	end
+	if entry.Box then
+		entry.Box.Visible = false
+	end
+	if entry.Label then
+		entry.Label.Visible = false
+	end
+end
+
 local function clearESP()
 	for player, entry in pairs(ESPCache) do
 		if entry then
+			if entry.Outer then
+				pcall(function() entry.Outer:Remove() end)
+			end
 			if entry.Box then
 				pcall(function() entry.Box:Remove() end)
 			end
@@ -91,6 +143,42 @@ local function clearESP()
 			end
 		end
 		ESPCache[player] = nil
+	end
+end
+
+local function createSkeletonEntry()
+	local lines = {}
+	for i = 1, #R15_BONES do
+		local line = Drawing.new("Line")
+		line.Visible = false
+		line.Thickness = 1.5
+		line.Color = Color3.fromRGB(165, 180, 252)
+		lines[i] = line
+	end
+	return lines
+end
+
+local function hideSkeletonEntry(lines)
+	if not lines then
+		return
+	end
+	for _, line in ipairs(lines) do
+		if line then
+			line.Visible = false
+		end
+	end
+end
+
+local function clearSkeletons()
+	for player, lines in pairs(SkeletonCache) do
+		if lines then
+			for _, line in ipairs(lines) do
+				if line then
+					pcall(function() line:Remove() end)
+				end
+			end
+		end
+		SkeletonCache[player] = nil
 	end
 end
 
@@ -124,6 +212,9 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	if ESPCache[player] then
+		if ESPCache[player].Outer then
+			pcall(function() ESPCache[player].Outer:Remove() end)
+		end
 		if ESPCache[player].Box then
 			pcall(function() ESPCache[player].Box:Remove() end)
 		end
@@ -131,6 +222,14 @@ Players.PlayerRemoving:Connect(function(player)
 			pcall(function() ESPCache[player].Label:Remove() end)
 		end
 		ESPCache[player] = nil
+	end
+	if SkeletonCache[player] then
+		for _, line in ipairs(SkeletonCache[player]) do
+			if line then
+				pcall(function() line:Remove() end)
+			end
+		end
+		SkeletonCache[player] = nil
 	end
 	if TracerCache[player] then
 		pcall(function() TracerCache[player]:Remove() end)
@@ -858,10 +957,17 @@ addToggle(MoveTab, "Noclip", false, function(v)
 	end
 end)
 
-addToggle(VisualTab, "ESP", false, function(v)
+addToggle(VisualTab, "CS2 Box ESP", false, function(v)
 	ESP = v
 	if not ESP then
 		clearESP()
+	end
+end)
+
+addToggle(VisualTab, "Skeleton ESP", false, function(v)
+	SkeletonESP = v
+	if not SkeletonESP then
+		clearSkeletons()
 	end
 end)
 
@@ -1018,6 +1124,35 @@ do
 	end)
 end
 
+local function updatePlayerSkeleton(cam, character, lines)
+	local bones = character:FindFirstChild("UpperTorso") and R15_BONES or R6_BONES
+	local lineIdx = 0
+
+	for _, pair in ipairs(bones) do
+		local p0 = character:FindFirstChild(pair[1])
+		local p1 = character:FindFirstChild(pair[2])
+		if p0 and p1 and p0:IsA("BasePart") and p1:IsA("BasePart") then
+			local s0, vis0 = cam:WorldToViewportPoint(p0.Position)
+			local s1, vis1 = cam:WorldToViewportPoint(p1.Position)
+			if vis0 and vis1 and s0.Z > 0 and s1.Z > 0 then
+				lineIdx += 1
+				local line = lines[lineIdx]
+				if line then
+					line.From = Vector2.new(s0.X, s0.Y)
+					line.To = Vector2.new(s1.X, s1.Y)
+					line.Visible = true
+				end
+			end
+		end
+	end
+
+	for i = lineIdx + 1, #lines do
+		if lines[i] then
+			lines[i].Visible = false
+		end
+	end
+end
+
 -- Single Unified & Phone-Optimized Frame Loop
 do
 	local frameCount = 0
@@ -1122,8 +1257,8 @@ do
 			SilentTargetPos = nil
 		end
 
-		-- Skip player ESP/Tracer loop completely when disabled
-		if not (ESP or Tracers) then
+		-- Skip visuals loop completely when all ESP/Skeleton/Tracer toggles are off
+		if not (ESP or SkeletonESP or Tracers) then
 			return
 		end
 
@@ -1158,6 +1293,10 @@ do
 						local boxX = rootPos.X - (width * 0.5)
 						local boxY = topPos.Y
 
+						entry.Outer.Size = Vector2.new(width, height)
+						entry.Outer.Position = Vector2.new(boxX, boxY)
+						entry.Outer.Visible = true
+
 						entry.Box.Size = Vector2.new(width, height)
 						entry.Box.Position = Vector2.new(boxX, boxY)
 						entry.Box.Visible = true
@@ -1172,12 +1311,23 @@ do
 						entry.Label.Position = Vector2.new(rootPos.X, math.max(boxY - 14, 4))
 						entry.Label.Visible = true
 					else
-						entry.Box.Visible = false
-						entry.Label.Visible = false
+						hideESPEntry(entry)
 					end
 				elseif ESPCache[p] then
-					ESPCache[p].Box.Visible = false
-					ESPCache[p].Label.Visible = false
+					hideESPEntry(ESPCache[p])
+				end
+
+				if SkeletonESP then
+					if not SkeletonCache[p] then
+						SkeletonCache[p] = createSkeletonEntry()
+					end
+					if validAlive and onScreen then
+						updatePlayerSkeleton(Camera, p.Character, SkeletonCache[p])
+					else
+						hideSkeletonEntry(SkeletonCache[p])
+					end
+				elseif SkeletonCache[p] then
+					hideSkeletonEntry(SkeletonCache[p])
 				end
 
 				if Tracers then
@@ -1197,8 +1347,10 @@ do
 				end
 			else
 				if ESPCache[p] then
-					ESPCache[p].Box.Visible = false
-					ESPCache[p].Label.Visible = false
+					hideESPEntry(ESPCache[p])
+				end
+				if SkeletonCache[p] then
+					hideSkeletonEntry(SkeletonCache[p])
 				end
 				if TracerCache[p] then
 					TracerCache[p].Visible = false
