@@ -7,6 +7,8 @@ local TweenService = game:GetService("TweenService")
 local Stats = game:GetService("Stats")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
 
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
@@ -15,21 +17,20 @@ local Aimbot = false
 local SilentAim = false
 local SilentHitChance = 100
 local AimFOV = 150
-local SpeedEnabled = false
-local JumpEnabled = false
 local SpeedValue = 16
-local JumpValue = 45
+local JumpValue = 14
 local Noclip = false
 local ESP = false
 local SkeletonESP = false
 local Tracers = false
 local Crosshair = false
+local HDGraphics = false
 local RainbowFOV = false
 local BulletSpeed = 2500
 local Prediction = true
 
-local DefaultWalkSpeed = 16
-local DefaultJumpPower = 45
+local ToggleKeybind = Enum.KeyCode.RightShift
+local listeningForKeybind = false
 
 local PanelWidth = 430
 local BaseWidth = 430
@@ -42,6 +43,195 @@ local CS2_Red = Color3.fromRGB(239, 68, 68)
 local CS2_White = Color3.fromRGB(255, 255, 255)
 local CS2_Green = Color3.fromRGB(34, 197, 94)
 local CS2_Outline = Color3.fromRGB(10, 12, 18)
+
+local PanelThemes = {
+	{
+		Name = "Dark Moon",
+		Accent = Color3.fromRGB(99, 102, 241),
+		Button = Color3.fromRGB(79, 70, 229),
+		Fill = Color3.fromRGB(129, 140, 248),
+		GradStart = Color3.fromRGB(22, 25, 36),
+		GradEnd = Color3.fromRGB(12, 14, 20),
+		Header = Color3.fromRGB(24, 28, 40),
+		Surface = Color3.fromRGB(19, 22, 31),
+		Row = Color3.fromRGB(26, 30, 42)
+	},
+	{
+		Name = "Crimson",
+		Accent = Color3.fromRGB(239, 68, 68),
+		Button = Color3.fromRGB(220, 38, 38),
+		Fill = Color3.fromRGB(248, 113, 113),
+		GradStart = Color3.fromRGB(32, 18, 22),
+		GradEnd = Color3.fromRGB(16, 10, 13),
+		Header = Color3.fromRGB(38, 20, 25),
+		Surface = Color3.fromRGB(26, 16, 20),
+		Row = Color3.fromRGB(36, 21, 26)
+	},
+	{
+		Name = "Emerald",
+		Accent = Color3.fromRGB(16, 185, 129),
+		Button = Color3.fromRGB(5, 150, 105),
+		Fill = Color3.fromRGB(52, 211, 153),
+		GradStart = Color3.fromRGB(16, 30, 26),
+		GradEnd = Color3.fromRGB(10, 17, 15),
+		Header = Color3.fromRGB(18, 35, 30),
+		Surface = Color3.fromRGB(14, 25, 22),
+		Row = Color3.fromRGB(20, 34, 29)
+	},
+	{
+		Name = "Violet",
+		Accent = Color3.fromRGB(168, 85, 247),
+		Button = Color3.fromRGB(147, 51, 234),
+		Fill = Color3.fromRGB(192, 132, 252),
+		GradStart = Color3.fromRGB(28, 18, 38),
+		GradEnd = Color3.fromRGB(14, 10, 20),
+		Header = Color3.fromRGB(34, 21, 45),
+		Surface = Color3.fromRGB(23, 16, 31),
+		Row = Color3.fromRGB(31, 21, 41)
+	},
+	{
+		Name = "Cyan",
+		Accent = Color3.fromRGB(6, 182, 212),
+		Button = Color3.fromRGB(8, 145, 178),
+		Fill = Color3.fromRGB(34, 211, 238),
+		GradStart = Color3.fromRGB(15, 28, 34),
+		GradEnd = Color3.fromRGB(9, 16, 20),
+		Header = Color3.fromRGB(18, 34, 41),
+		Surface = Color3.fromRGB(14, 24, 29),
+		Row = Color3.fromRGB(19, 32, 39)
+	}
+}
+
+local currentThemeIndex = 1
+local ActiveTheme = PanelThemes[currentThemeIndex]
+
+local function playClassicClick()
+	pcall(function()
+		local sound = Instance.new("Sound")
+		sound.Name = "DarkMoonClassicClick"
+		sound.SoundId = "rbxassetid://12221967"
+		sound.Volume = 0.35
+		sound.PlaybackSpeed = 1.05
+		sound.Parent = SoundService
+		sound:Play()
+		sound.Ended:Connect(function()
+			if sound and sound.Parent then
+				sound:Destroy()
+			end
+		end)
+		task.delay(1.5, function()
+			if sound and sound.Parent then
+				sound:Destroy()
+			end
+		end)
+	end)
+end
+
+local savedLightingProps = nil
+local createdHDEffects = {}
+
+local function cleanupHDEffects()
+	for _, obj in ipairs(createdHDEffects) do
+		if obj and obj.Parent then
+			pcall(function()
+				obj:Destroy()
+			end)
+		end
+	end
+	table.clear(createdHDEffects)
+
+	for _, child in ipairs(Lighting:GetChildren()) do
+		if child:GetAttribute("DarkMoonHDEffect") == true then
+			pcall(function()
+				child:Destroy()
+			end)
+		end
+	end
+end
+
+local function setHDGraphics(enabled)
+	if enabled then
+		if not savedLightingProps then
+			savedLightingProps = {
+				GlobalShadows = Lighting.GlobalShadows,
+				Brightness = Lighting.Brightness,
+				ExposureCompensation = Lighting.ExposureCompensation,
+				ColorShift_Top = Lighting.ColorShift_Top,
+				Ambient = Lighting.Ambient,
+				OutdoorAmbient = Lighting.OutdoorAmbient,
+				EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
+				EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale
+			}
+		end
+
+		cleanupHDEffects()
+
+		pcall(function()
+			Lighting.GlobalShadows = true
+			Lighting.Brightness = math.clamp(Lighting.Brightness + 0.65, 1.5, 4.5)
+			Lighting.ExposureCompensation = 0.15
+			Lighting.ColorShift_Top = Color3.fromRGB(255, 248, 235)
+			Lighting.Ambient = Color3.fromRGB(68, 74, 92)
+			Lighting.OutdoorAmbient = Color3.fromRGB(115, 124, 146)
+			Lighting.EnvironmentDiffuseScale = 0.85
+			Lighting.EnvironmentSpecularScale = 0.9
+		end)
+
+		local bloom = Instance.new("BloomEffect")
+		bloom.Name = "DarkMoon_HDBloom"
+		bloom:SetAttribute("DarkMoonHDEffect", true)
+		bloom.Intensity = 0.35
+		bloom.Size = 24
+		bloom.Threshold = 1.05
+		bloom.Parent = Lighting
+		table.insert(createdHDEffects, bloom)
+
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.Name = "DarkMoon_HDColor"
+		cc:SetAttribute("DarkMoonHDEffect", true)
+		cc.Brightness = 0.03
+		cc.Contrast = 0.14
+		cc.Saturation = 0.16
+		cc.TintColor = Color3.fromRGB(252, 250, 255)
+		cc.Parent = Lighting
+		table.insert(createdHDEffects, cc)
+
+		local sunRays = Instance.new("SunRaysEffect")
+		sunRays.Name = "DarkMoon_HDSunRays"
+		sunRays:SetAttribute("DarkMoonHDEffect", true)
+		sunRays.Intensity = 0.08
+		sunRays.Spread = 0.65
+		sunRays.Parent = Lighting
+		table.insert(createdHDEffects, sunRays)
+
+		if not Lighting:FindFirstChildOfClass("Atmosphere") then
+			local atmo = Instance.new("Atmosphere")
+			atmo.Name = "DarkMoon_HDAtmosphere"
+			atmo:SetAttribute("DarkMoonHDEffect", true)
+			atmo.Density = 0.22
+			atmo.Offset = 0.1
+			atmo.Glare = 0.15
+			atmo.Haze = 0.4
+			atmo.Parent = Lighting
+			table.insert(createdHDEffects, atmo)
+		end
+	else
+		cleanupHDEffects()
+		if savedLightingProps then
+			pcall(function()
+				Lighting.GlobalShadows = savedLightingProps.GlobalShadows
+				Lighting.Brightness = savedLightingProps.Brightness
+				Lighting.ExposureCompensation = savedLightingProps.ExposureCompensation
+				Lighting.ColorShift_Top = savedLightingProps.ColorShift_Top
+				Lighting.Ambient = savedLightingProps.Ambient
+				Lighting.OutdoorAmbient = savedLightingProps.OutdoorAmbient
+				Lighting.EnvironmentDiffuseScale = savedLightingProps.EnvironmentDiffuseScale
+				Lighting.EnvironmentSpecularScale = savedLightingProps.EnvironmentSpecularScale
+			end)
+			savedLightingProps = nil
+		end
+	end
+end
 
 local Circle = Drawing.new("Circle")
 Circle.Visible = false
@@ -196,25 +386,6 @@ local function restoreCharacterCollisions()
 			end)
 		end
 		SavedCollide[part] = nil
-	end
-end
-
-local function applyCharacterMovement(char)
-	if not char then return end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return end
-
-	local targetSpeed = SpeedEnabled and SpeedValue or DefaultWalkSpeed
-	if hum.WalkSpeed ~= targetSpeed then
-		hum.WalkSpeed = targetSpeed
-	end
-
-	if not hum.UseJumpPower then
-		hum.UseJumpPower = true
-	end
-	local targetJump = JumpEnabled and JumpValue or DefaultJumpPower
-	if hum.JumpPower ~= targetJump then
-		hum.JumpPower = targetJump
 	end
 end
 
@@ -557,7 +728,7 @@ MoonToggleHolder.Active = true
 MoonToggleHolder.Parent = ScreenGui
 addCorner(MoonToggleHolder, 999)
 
-local MoonOuterStroke = addStroke(MoonToggleHolder, Color3.fromRGB(165, 180, 252), 1.8, 0.15)
+local MoonOuterStroke = addStroke(MoonToggleHolder, ActiveTheme.Fill, 1.8, 0.15)
 
 local MoonDisc = Instance.new("Frame")
 MoonDisc.Name = "MoonDisc"
@@ -617,8 +788,8 @@ addStroke(MainFrame, Color3.fromRGB(51, 65, 85), 1.2, 0.2)
 local MainGrad = Instance.new("UIGradient")
 MainGrad.Rotation = 135
 MainGrad.Color = ColorSequence.new({
-	ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 25, 36)),
-	ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 14, 20))
+	ColorSequenceKeypoint.new(0, ActiveTheme.GradStart),
+	ColorSequenceKeypoint.new(1, ActiveTheme.GradEnd)
 })
 MainGrad.Parent = MainFrame
 
@@ -626,7 +797,7 @@ MainGrad.Parent = MainFrame
 local Header = Instance.new("Frame")
 Header.Name = "Header"
 Header.Size = UDim2.new(1, 0, 0, 38)
-Header.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+Header.BackgroundColor3 = ActiveTheme.Header
 Header.BorderSizePixel = 0
 Header.Parent = MainFrame
 addCorner(Header, 12)
@@ -634,14 +805,14 @@ addCorner(Header, 12)
 local HeaderFix = Instance.new("Frame")
 HeaderFix.Size = UDim2.new(1, 0, 0, 10)
 HeaderFix.Position = UDim2.new(0, 0, 1, -10)
-HeaderFix.BackgroundColor3 = Color3.fromRGB(24, 28, 40)
+HeaderFix.BackgroundColor3 = ActiveTheme.Header
 HeaderFix.BorderSizePixel = 0
 HeaderFix.Parent = Header
 
 local AccentDot = Instance.new("Frame")
 AccentDot.Size = UDim2.new(0, 7, 0, 7)
 AccentDot.Position = UDim2.new(0, 14, 0.5, -3.5)
-AccentDot.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+AccentDot.BackgroundColor3 = ActiveTheme.Accent
 AccentDot.BorderSizePixel = 0
 AccentDot.Parent = Header
 addCorner(AccentDot, 99)
@@ -673,7 +844,7 @@ local TopInfoBar = Instance.new("Frame")
 TopInfoBar.Name = "TopInfoBar"
 TopInfoBar.Size = UDim2.new(1, -16, 0, 26)
 TopInfoBar.Position = UDim2.new(0, 8, 0, 42)
-TopInfoBar.BackgroundColor3 = Color3.fromRGB(20, 24, 35)
+TopInfoBar.BackgroundColor3 = ActiveTheme.Surface
 TopInfoBar.BorderSizePixel = 0
 TopInfoBar.Parent = MainFrame
 addCorner(TopInfoBar, 8)
@@ -695,7 +866,7 @@ local DiscordBtn = Instance.new("TextButton")
 DiscordBtn.Name = "DiscordInviteBtn"
 DiscordBtn.Size = UDim2.new(0.43, -6, 0, 18)
 DiscordBtn.Position = UDim2.new(0.57, 0, 0.5, -9)
-DiscordBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+DiscordBtn.BackgroundColor3 = ActiveTheme.Button
 DiscordBtn.Text = "discord.gg/QxRKp9wNeE"
 DiscordBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
 DiscordBtn.Font = Enum.Font.GothamBold
@@ -705,6 +876,7 @@ DiscordBtn.Parent = TopInfoBar
 addCorner(DiscordBtn, 6)
 
 DiscordBtn.MouseButton1Click:Connect(function()
+	playClassicClick()
 	local copied = false
 	if typeof(setclipboard) == "function" then
 		pcall(function()
@@ -725,7 +897,7 @@ local Sidebar = Instance.new("Frame")
 Sidebar.Name = "Sidebar"
 Sidebar.Size = UDim2.new(0, 112, 1, -80)
 Sidebar.Position = UDim2.new(0, 8, 0, 72)
-Sidebar.BackgroundColor3 = Color3.fromRGB(19, 22, 31)
+Sidebar.BackgroundColor3 = ActiveTheme.Surface
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
 addCorner(Sidebar, 9)
@@ -748,7 +920,7 @@ local ContentArea = Instance.new("Frame")
 ContentArea.Name = "ContentArea"
 ContentArea.Size = UDim2.new(1, -132, 1, -80)
 ContentArea.Position = UDim2.new(0, 124, 0, 72)
-ContentArea.BackgroundColor3 = Color3.fromRGB(19, 22, 31)
+ContentArea.BackgroundColor3 = ActiveTheme.Surface
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
 addCorner(ContentArea, 9)
@@ -758,13 +930,17 @@ local TabPages = {}
 local TabButtons = {}
 local tabOrderCounter = 0
 
+local themedToggles = {}
+local themedSliders = {}
+local themedActionButtons = {}
+
 local function createTab(name)
 	tabOrderCounter += 1
 	local btn = Instance.new("TextButton")
 	btn.Name = name .. "TabBtn"
 	btn.LayoutOrder = tabOrderCounter
 	btn.Size = UDim2.new(1, 0, 0, 30)
-	btn.BackgroundColor3 = Color3.fromRGB(28, 32, 46)
+	btn.BackgroundColor3 = ActiveTheme.Row
 	btn.BackgroundTransparency = 1
 	btn.Text = name
 	btn.TextColor3 = Color3.fromRGB(148, 163, 184)
@@ -780,7 +956,7 @@ local function createTab(name)
 	page.BackgroundTransparency = 1
 	page.BorderSizePixel = 0
 	page.ScrollBarThickness = 3
-	page.ScrollBarImageColor3 = Color3.fromRGB(99, 102, 241)
+	page.ScrollBarImageColor3 = ActiveTheme.Accent
 	page.CanvasSize = UDim2.new(0, 0, 0, 0)
 	page.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	page.Visible = false
@@ -798,6 +974,7 @@ local function createTab(name)
 	pad.Parent = page
 
 	btn.MouseButton1Click:Connect(function()
+		playClassicClick()
 		for tName, p in pairs(TabPages) do
 			p.Visible = (tName == name)
 		end
@@ -818,7 +995,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, 0, 0, 34)
-	row.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	row.BackgroundColor3 = ActiveTheme.Row
 	row.BorderSizePixel = 0
 	row.Parent = page
 	addCorner(row, 7)
@@ -838,7 +1015,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 	local pill = Instance.new("TextButton")
 	pill.Size = UDim2.new(0, 40, 0, 20)
 	pill.Position = UDim2.new(1, -48, 0.5, -10)
-	pill.BackgroundColor3 = state and Color3.fromRGB(99, 102, 241) or Color3.fromRGB(51, 65, 85)
+	pill.BackgroundColor3 = state and ActiveTheme.Accent or Color3.fromRGB(51, 65, 85)
 	pill.Text = ""
 	pill.AutoButtonColor = false
 	pill.Parent = row
@@ -853,7 +1030,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 	addCorner(knob, 99)
 
 	local function refreshVisual(animated)
-		local targetPill = state and Color3.fromRGB(99, 102, 241) or Color3.fromRGB(51, 65, 85)
+		local targetPill = state and ActiveTheme.Accent or Color3.fromRGB(51, 65, 85)
 		local targetKnob = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
 		if animated then
 			TweenService:Create(pill, TweenInfo.new(0.14), {BackgroundColor3 = targetPill}):Play()
@@ -864,7 +1041,17 @@ local function addToggle(page, labelText, defaultVal, callback)
 		end
 	end
 
+	table.insert(themedToggles, {
+		Row = row,
+		Pill = pill,
+		GetState = function()
+			return state
+		end,
+		Refresh = refreshVisual
+	})
+
 	pill.MouseButton1Click:Connect(function()
+		playClassicClick()
 		state = not state
 		refreshVisual(true)
 		if callback then
@@ -883,7 +1070,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 
 	local frame = Instance.new("Frame")
 	frame.Size = UDim2.new(1, 0, 0, 44)
-	frame.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	frame.BackgroundColor3 = ActiveTheme.Row
 	frame.BorderSizePixel = 0
 	frame.Parent = page
 	addCorner(frame, 7)
@@ -905,7 +1092,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 	valLabel.Position = UDim2.new(0.7, 0, 0, 3)
 	valLabel.BackgroundTransparency = 1
 	valLabel.Text = tostring(value)
-	valLabel.TextColor3 = Color3.fromRGB(129, 140, 248)
+	valLabel.TextColor3 = ActiveTheme.Fill
 	valLabel.Font = Enum.Font.GothamBlack
 	valLabel.TextSize = 12
 	valLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -921,10 +1108,16 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 
 	local fill = Instance.new("Frame")
 	fill.Size = UDim2.new(0, 0, 1, 0)
-	fill.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+	fill.BackgroundColor3 = ActiveTheme.Accent
 	fill.BorderSizePixel = 0
 	fill.Parent = track
 	addCorner(fill, 99)
+
+	table.insert(themedSliders, {
+		Frame = frame,
+		ValLabel = valLabel,
+		Fill = fill
+	})
 
 	local draggingSlider = false
 
@@ -946,6 +1139,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			playClassicClick()
 			draggingSlider = true
 			local relX = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
 			setFromAlpha(relX)
@@ -969,7 +1163,7 @@ end
 local function addButton(page, labelText, btnText, callback)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, 0, 0, 36)
-	row.BackgroundColor3 = Color3.fromRGB(26, 30, 42)
+	row.BackgroundColor3 = ActiveTheme.Row
 	row.BorderSizePixel = 0
 	row.Parent = page
 	addCorner(row, 7)
@@ -989,7 +1183,7 @@ local function addButton(page, labelText, btnText, callback)
 	local actionBtn = Instance.new("TextButton")
 	actionBtn.Size = UDim2.new(0.42, -6, 0, 24)
 	actionBtn.Position = UDim2.new(0.58, 0, 0.5, -12)
-	actionBtn.BackgroundColor3 = Color3.fromRGB(79, 70, 229)
+	actionBtn.BackgroundColor3 = ActiveTheme.Button
 	actionBtn.Text = btnText
 	actionBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
 	actionBtn.Font = Enum.Font.GothamBold
@@ -998,7 +1192,13 @@ local function addButton(page, labelText, btnText, callback)
 	actionBtn.Parent = row
 	addCorner(actionBtn, 6)
 
+	table.insert(themedActionButtons, {
+		Row = row,
+		Button = actionBtn
+	})
+
 	actionBtn.MouseButton1Click:Connect(function()
+		playClassicClick()
 		if callback then
 			callback(actionBtn)
 		end
@@ -1048,28 +1248,12 @@ addToggle(CombatTab, "Rainbow FOV", false, function(v)
 	RainbowFOV = v
 end)
 
-addToggle(MoveTab, "Speed Hack", false, function(v)
-	SpeedEnabled = v
-	applyCharacterMovement(LocalPlayer.Character)
-end)
-
 addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
 	SpeedValue = v
-	if SpeedEnabled then
-		applyCharacterMovement(LocalPlayer.Character)
-	end
 end)
 
-addToggle(MoveTab, "Jump Hack", false, function(v)
-	JumpEnabled = v
-	applyCharacterMovement(LocalPlayer.Character)
-end)
-
-addSlider(MoveTab, "Jump", 45, 150, 5, 45, function(v)
+addSlider(MoveTab, "Jump", 14, 150, 2, 14, function(v)
 	JumpValue = v
-	if JumpEnabled then
-		applyCharacterMovement(LocalPlayer.Character)
-	end
 end)
 
 addToggle(MoveTab, "Noclip", false, function(v)
@@ -1079,7 +1263,7 @@ addToggle(MoveTab, "Noclip", false, function(v)
 	end
 end)
 
-addToggle(VisualTab, "CS2 ESP", false, function(v)
+addToggle(VisualTab, "ESP", false, function(v)
 	ESP = v
 	if not ESP then
 		clearESP()
@@ -1106,12 +1290,67 @@ addToggle(VisualTab, "Crosshair", false, function(v)
 	CrosshairV.Visible = v
 end)
 
+addToggle(VisualTab, "HD Graphics", false, function(v)
+	HDGraphics = v
+	setHDGraphics(v)
+end)
+
 local function applyPanelSize(newWidth)
 	PanelWidth = math.clamp(newWidth, 360, 560)
 	local newHeight = math.floor((PanelWidth * AspectRatio) + 0.5)
 	MainFrame.Size = UDim2.new(0, PanelWidth, 0, newHeight)
 	MainFrame.Position = UDim2.new(0.5, -PanelWidth / 2, 0.5, -newHeight / 2)
 end
+
+local function applyPanelTheme(themeObj)
+	ActiveTheme = themeObj
+	MainGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, ActiveTheme.GradStart),
+		ColorSequenceKeypoint.new(1, ActiveTheme.GradEnd)
+	})
+	Header.BackgroundColor3 = ActiveTheme.Header
+	HeaderFix.BackgroundColor3 = ActiveTheme.Header
+	AccentDot.BackgroundColor3 = ActiveTheme.Accent
+	TopInfoBar.BackgroundColor3 = ActiveTheme.Surface
+	DiscordBtn.BackgroundColor3 = ActiveTheme.Button
+	Sidebar.BackgroundColor3 = ActiveTheme.Surface
+	ContentArea.BackgroundColor3 = ActiveTheme.Surface
+	MoonOuterStroke.Color = ActiveTheme.Fill
+
+	for _, page in pairs(TabPages) do
+		page.ScrollBarImageColor3 = ActiveTheme.Accent
+	end
+	for _, btn in pairs(TabButtons) do
+		btn.BackgroundColor3 = ActiveTheme.Row
+	end
+	for _, item in ipairs(themedToggles) do
+		item.Row.BackgroundColor3 = ActiveTheme.Row
+		item.Refresh(false)
+	end
+	for _, item in ipairs(themedSliders) do
+		item.Frame.BackgroundColor3 = ActiveTheme.Row
+		item.ValLabel.TextColor3 = ActiveTheme.Fill
+		item.Fill.BackgroundColor3 = ActiveTheme.Accent
+	end
+	for _, item in ipairs(themedActionButtons) do
+		item.Row.BackgroundColor3 = ActiveTheme.Row
+		item.Button.BackgroundColor3 = ActiveTheme.Button
+	end
+end
+
+local keybindBtnRef = nil
+
+keybindBtnRef = addButton(SettingsTab, "Keybind", ToggleKeybind.Name, function(btn)
+	listeningForKeybind = true
+	btn.Text = "Press key..."
+end)
+
+addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, function(btn)
+	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
+	local nextTheme = PanelThemes[currentThemeIndex]
+	applyPanelTheme(nextTheme)
+	btn.Text = nextTheme.Name
+end)
 
 addButton(SettingsTab, "Server Hop", "Join Server", function(btn)
 	local prevText = btn.Text
@@ -1136,7 +1375,7 @@ local function setWindowVisible(vis)
 	MainFrame.Visible = vis
 	MoonDisc.BackgroundTransparency = vis and 0 or 0.25
 	TweenService:Create(MoonOuterStroke, TweenInfo.new(0.15), {
-		Color = vis and Color3.fromRGB(165, 180, 252) or Color3.fromRGB(99, 102, 241),
+		Color = vis and ActiveTheme.Fill or ActiveTheme.Accent,
 		Transparency = vis and 0.1 or 0.45
 	}):Play()
 end
@@ -1172,6 +1411,7 @@ do
 					btnDragging = false
 					TweenService:Create(MoonToggleHolder, TweenInfo.new(0.14), {Size = UDim2.new(0, 52, 0, 52)}):Play()
 					if not wasDragged then
+						playClassicClick()
 						setWindowVisible(not MainFrame.Visible)
 					end
 				end
@@ -1202,8 +1442,23 @@ do
 end
 
 UIS.InputBegan:Connect(function(input, gameProcessed)
-	if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
-		setWindowVisible(not MainFrame.Visible)
+	if input.UserInputType == Enum.UserInputType.Keyboard then
+		if listeningForKeybind then
+			listeningForKeybind = false
+			if input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode ~= Enum.KeyCode.Escape then
+				ToggleKeybind = input.KeyCode
+			end
+			if keybindBtnRef and keybindBtnRef.Parent then
+				keybindBtnRef.Text = ToggleKeybind.Name
+			end
+			playClassicClick()
+			return
+		end
+
+		if not gameProcessed and input.KeyCode == ToggleKeybind then
+			playClassicClick()
+			setWindowVisible(not MainFrame.Visible)
+		end
 	end
 end)
 
@@ -1273,7 +1528,18 @@ do
 		-- Movement & Throttled Noclip
 		local char = LocalPlayer.Character
 		if char then
-			applyCharacterMovement(char)
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if hum then
+				if hum.WalkSpeed ~= SpeedValue then
+					hum.WalkSpeed = SpeedValue
+				end
+				if not hum.UseJumpPower then
+					hum.UseJumpPower = true
+				end
+				if hum.JumpPower ~= JumpValue then
+					hum.JumpPower = JumpValue
+				end
+			end
 
 			if Noclip then
 				noclipElapsed += dt
