@@ -18,7 +18,7 @@ local SilentAim = false
 local SilentHitChance = 100
 local AimFOV = 150
 local SpeedValue = 16
-local JumpValue = 14
+local JumpValue = 25
 local Noclip = false
 local ESP = false
 local SkeletonESP = false
@@ -43,6 +43,46 @@ local CS2_Red = Color3.fromRGB(239, 68, 68)
 local CS2_White = Color3.fromRGB(255, 255, 255)
 local CS2_Green = Color3.fromRGB(34, 197, 94)
 local CS2_Outline = Color3.fromRGB(10, 12, 18)
+
+local ClickSoundPresets = {
+	{Name = "1: Classic", SoundId = "rbxassetid://12221967", Volume = 0.35, PlaybackSpeed = 1.05},
+	{Name = "2: Crisp High", SoundId = "rbxassetid://12221967", Volume = 0.32, PlaybackSpeed = 1.35},
+	{Name = "3: Deep Tap", SoundId = "rbxassetid://12221967", Volume = 0.42, PlaybackSpeed = 0.78},
+	{Name = "4: Switch", SoundId = "rbxassetid://452267918", Volume = 0.35, PlaybackSpeed = 1.0},
+	{Name = "5: Tactile", SoundId = "rbxassetid://452267918", Volume = 0.38, PlaybackSpeed = 1.22},
+	{Name = "6: Soft Pop", SoundId = "rbxassetid://4307186075", Volume = 0.35, PlaybackSpeed = 1.0},
+	{Name = "7: Bubble", SoundId = "rbxassetid://4307186075", Volume = 0.35, PlaybackSpeed = 1.25},
+	{Name = "8: Hover Snap", SoundId = "rbxassetid://408524543", Volume = 0.32, PlaybackSpeed = 1.0},
+	{Name = "9: UI Tick", SoundId = "rbxassetid://9112780193", Volume = 0.35, PlaybackSpeed = 1.1},
+	{Name = "10: Retro Key", SoundId = "rbxassetid://3848738002", Volume = 0.35, PlaybackSpeed = 1.0}
+}
+
+local currentClickSoundIndex = 1
+local ActiveClickSound = ClickSoundPresets[currentClickSoundIndex]
+
+local function playClickSound()
+	local preset = ActiveClickSound
+	if not preset then return end
+	pcall(function()
+		local sound = Instance.new("Sound")
+		sound.Name = "DarkMoonClickSound"
+		sound.SoundId = preset.SoundId
+		sound.Volume = preset.Volume
+		sound.PlaybackSpeed = preset.PlaybackSpeed
+		sound.Parent = SoundService
+		sound:Play()
+		sound.Ended:Connect(function()
+			if sound and sound.Parent then
+				sound:Destroy()
+			end
+		end)
+		task.delay(1.5, function()
+			if sound and sound.Parent then
+				sound:Destroy()
+			end
+		end)
+	end)
+end
 
 local PanelThemes = {
 	{
@@ -104,28 +144,6 @@ local PanelThemes = {
 
 local currentThemeIndex = 1
 local ActiveTheme = PanelThemes[currentThemeIndex]
-
-local function playClassicClick()
-	pcall(function()
-		local sound = Instance.new("Sound")
-		sound.Name = "DarkMoonClassicClick"
-		sound.SoundId = "rbxassetid://12221967"
-		sound.Volume = 0.35
-		sound.PlaybackSpeed = 1.05
-		sound.Parent = SoundService
-		sound:Play()
-		sound.Ended:Connect(function()
-			if sound and sound.Parent then
-				sound:Destroy()
-			end
-		end)
-		task.delay(1.5, function()
-			if sound and sound.Parent then
-				sound:Destroy()
-			end
-		end)
-	end)
-end
 
 local savedLightingProps = nil
 local createdHDEffects = {}
@@ -876,7 +894,7 @@ DiscordBtn.Parent = TopInfoBar
 addCorner(DiscordBtn, 6)
 
 DiscordBtn.MouseButton1Click:Connect(function()
-	playClassicClick()
+	playClickSound()
 	local copied = false
 	if typeof(setclipboard) == "function" then
 		pcall(function()
@@ -974,7 +992,7 @@ local function createTab(name)
 	pad.Parent = page
 
 	btn.MouseButton1Click:Connect(function()
-		playClassicClick()
+		playClickSound()
 		for tName, p in pairs(TabPages) do
 			p.Visible = (tName == name)
 		end
@@ -1051,7 +1069,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 	})
 
 	pill.MouseButton1Click:Connect(function()
-		playClassicClick()
+		playClickSound()
 		state = not state
 		refreshVisual(true)
 		if callback then
@@ -1139,7 +1157,7 @@ local function addSlider(page, labelText, minVal, maxVal, increment, defaultVal,
 
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			playClassicClick()
+			playClickSound()
 			draggingSlider = true
 			local relX = (input.Position.X - track.AbsolutePosition.X) / math.max(track.AbsoluteSize.X, 1)
 			setFromAlpha(relX)
@@ -1198,7 +1216,7 @@ local function addButton(page, labelText, btnText, callback)
 	})
 
 	actionBtn.MouseButton1Click:Connect(function()
-		playClassicClick()
+		playClickSound()
 		if callback then
 			callback(actionBtn)
 		end
@@ -1252,7 +1270,7 @@ addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
 	SpeedValue = v
 end)
 
-addSlider(MoveTab, "Jump", 14, 150, 2, 14, function(v)
+addSlider(MoveTab, "Jump", 14, 150, 1, 25, function(v)
 	JumpValue = v
 end)
 
@@ -1345,6 +1363,13 @@ keybindBtnRef = addButton(SettingsTab, "Keybind", ToggleKeybind.Name, function(b
 	btn.Text = "Press key..."
 end)
 
+addButton(SettingsTab, "Click Sound", ActiveClickSound.Name, function(btn)
+	currentClickSoundIndex = (currentClickSoundIndex % #ClickSoundPresets) + 1
+	ActiveClickSound = ClickSoundPresets[currentClickSoundIndex]
+	btn.Text = ActiveClickSound.Name
+	playClickSound()
+end)
+
 addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, function(btn)
 	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
 	local nextTheme = PanelThemes[currentThemeIndex]
@@ -1411,7 +1436,7 @@ do
 					btnDragging = false
 					TweenService:Create(MoonToggleHolder, TweenInfo.new(0.14), {Size = UDim2.new(0, 52, 0, 52)}):Play()
 					if not wasDragged then
-						playClassicClick()
+						playClickSound()
 						setWindowVisible(not MainFrame.Visible)
 					end
 				end
@@ -1451,12 +1476,12 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
 			if keybindBtnRef and keybindBtnRef.Parent then
 				keybindBtnRef.Text = ToggleKeybind.Name
 			end
-			playClassicClick()
+			playClickSound()
 			return
 		end
 
 		if not gameProcessed and input.KeyCode == ToggleKeybind then
-			playClassicClick()
+			playClickSound()
 			setWindowVisible(not MainFrame.Visible)
 		end
 	end
