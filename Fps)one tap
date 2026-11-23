@@ -9,6 +9,7 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
@@ -20,17 +21,22 @@ local AimFOV = 150
 local SpeedValue = 16
 local JumpValue = 25
 local Noclip = false
+local UnlimitedMoney = false
+local BypassCasesOpen = false
 local ESP = false
 local SkeletonESP = false
 local Tracers = false
 local Crosshair = false
 local HDGraphics = false
 local RainbowFOV = false
+local AutoPanelColour = false
 local BulletSpeed = 2500
 local Prediction = true
 
 local ToggleKeybind = Enum.KeyCode.RightShift
-local listeningForKeybind = false
+local listeningForMainKeybind = false
+local activeFeatureBindSlot = nil
+local featureKeybinds = {} -- [KeyCode] = bindEntry
 
 local PanelWidth = 430
 local BaseWidth = 430
@@ -186,50 +192,60 @@ local function setHDGraphics(enabled)
 
 		pcall(function()
 			Lighting.GlobalShadows = true
-			Lighting.Brightness = math.clamp(Lighting.Brightness + 0.65, 1.5, 4.5)
-			Lighting.ExposureCompensation = 0.15
-			Lighting.ColorShift_Top = Color3.fromRGB(255, 248, 235)
-			Lighting.Ambient = Color3.fromRGB(68, 74, 92)
-			Lighting.OutdoorAmbient = Color3.fromRGB(115, 124, 146)
-			Lighting.EnvironmentDiffuseScale = 0.85
-			Lighting.EnvironmentSpecularScale = 0.9
+			Lighting.Brightness = math.clamp(Lighting.Brightness + 0.9, 2.0, 5.0)
+			Lighting.ExposureCompensation = 0.22
+			Lighting.ColorShift_Top = Color3.fromRGB(255, 246, 228)
+			Lighting.Ambient = Color3.fromRGB(62, 68, 86)
+			Lighting.OutdoorAmbient = Color3.fromRGB(122, 132, 156)
+			Lighting.EnvironmentDiffuseScale = 1.0
+			Lighting.EnvironmentSpecularScale = 1.0
 		end)
 
 		local bloom = Instance.new("BloomEffect")
-		bloom.Name = "DarkMoon_HDBloom"
+		bloom.Name = "DarkMoon_4KBloom"
 		bloom:SetAttribute("DarkMoonHDEffect", true)
-		bloom.Intensity = 0.35
-		bloom.Size = 24
-		bloom.Threshold = 1.05
+		bloom.Intensity = 0.42
+		bloom.Size = 28
+		bloom.Threshold = 0.98
 		bloom.Parent = Lighting
 		table.insert(createdHDEffects, bloom)
 
 		local cc = Instance.new("ColorCorrectionEffect")
-		cc.Name = "DarkMoon_HDColor"
+		cc.Name = "DarkMoon_4KColor"
 		cc:SetAttribute("DarkMoonHDEffect", true)
-		cc.Brightness = 0.03
-		cc.Contrast = 0.14
-		cc.Saturation = 0.16
-		cc.TintColor = Color3.fromRGB(252, 250, 255)
+		cc.Brightness = 0.04
+		cc.Contrast = 0.22
+		cc.Saturation = 0.2
+		cc.TintColor = Color3.fromRGB(254, 252, 255)
 		cc.Parent = Lighting
 		table.insert(createdHDEffects, cc)
 
 		local sunRays = Instance.new("SunRaysEffect")
-		sunRays.Name = "DarkMoon_HDSunRays"
+		sunRays.Name = "DarkMoon_4KSunRays"
 		sunRays:SetAttribute("DarkMoonHDEffect", true)
-		sunRays.Intensity = 0.08
-		sunRays.Spread = 0.65
+		sunRays.Intensity = 0.12
+		sunRays.Spread = 0.72
 		sunRays.Parent = Lighting
 		table.insert(createdHDEffects, sunRays)
 
+		local dof = Instance.new("DepthOfFieldEffect")
+		dof.Name = "DarkMoon_4KDepth"
+		dof:SetAttribute("DarkMoonHDEffect", true)
+		dof.FarIntensity = 0.14
+		dof.FocusDistance = 55
+		dof.InFocusRadius = 35
+		dof.NearIntensity = 0.04
+		dof.Parent = Lighting
+		table.insert(createdHDEffects, dof)
+
 		if not Lighting:FindFirstChildOfClass("Atmosphere") then
 			local atmo = Instance.new("Atmosphere")
-			atmo.Name = "DarkMoon_HDAtmosphere"
+			atmo.Name = "DarkMoon_4KAtmosphere"
 			atmo:SetAttribute("DarkMoonHDEffect", true)
-			atmo.Density = 0.22
-			atmo.Offset = 0.1
-			atmo.Glare = 0.15
-			atmo.Haze = 0.4
+			atmo.Density = 0.18
+			atmo.Offset = 0.12
+			atmo.Glare = 0.22
+			atmo.Haze = 0.32
 			atmo.Parent = Lighting
 			table.insert(createdHDEffects, atmo)
 		end
@@ -247,6 +263,159 @@ local function setHDGraphics(enabled)
 				Lighting.EnvironmentSpecularScale = savedLightingProps.EnvironmentSpecularScale
 			end)
 			savedLightingProps = nil
+		end
+	end
+end
+
+local moneyKeywords = {
+	"money", "cash", "coin", "coins", "gold", "gem", "gems",
+	"token", "tokens", "credit", "credits", "balance", "wallet",
+	"dollar", "dollars", "bucks", "point", "points"
+}
+
+local function matchesMoneyName(nameStr)
+	if typeof(nameStr) ~= "string" then
+		return false
+	end
+	local lower = string.lower(nameStr)
+	for _, kw in ipairs(moneyKeywords) do
+		if string.find(lower, kw, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function applyUnlimitedMoneyStep()
+	if not LocalPlayer then
+		return
+	end
+	local targetAmount = 999999999
+
+	local containers = {
+		LocalPlayer:FindFirstChild("leaderstats"),
+		LocalPlayer:FindFirstChild("Data"),
+		LocalPlayer:FindFirstChild("Stats"),
+		LocalPlayer:FindFirstChild("PlayerData"),
+		LocalPlayer:FindFirstChild("Inventory")
+	}
+
+	for _, folder in ipairs(containers) do
+		if folder then
+			for _, obj in ipairs(folder:GetDescendants()) do
+				if (obj:IsA("IntValue") or obj:IsA("NumberValue")) and matchesMoneyName(obj.Name) then
+					pcall(function()
+						obj.Value = targetAmount
+					end)
+				end
+			end
+		end
+	end
+
+	for _, child in ipairs(LocalPlayer:GetChildren()) do
+		if (child:IsA("IntValue") or child:IsA("NumberValue")) and matchesMoneyName(child.Name) then
+			pcall(function()
+				child.Value = targetAmount
+			end)
+		end
+	end
+
+	pcall(function()
+		local attrs = LocalPlayer:GetAttributes()
+		if typeof(attrs) == "table" then
+			for attrName, attrVal in pairs(attrs) do
+				if typeof(attrVal) == "number" and matchesMoneyName(attrName) then
+					LocalPlayer:SetAttribute(attrName, targetAmount)
+				end
+			end
+		end
+	end)
+end
+
+local caseKeywords = {
+	"case", "cases", "crate", "crates", "box", "boxes",
+	"open", "unlock", "spin", "roll", "chest", "pack"
+}
+
+local function matchesCaseName(nameStr)
+	if typeof(nameStr) ~= "string" then
+		return false
+	end
+	local lower = string.lower(nameStr)
+	for _, kw in ipairs(caseKeywords) do
+		if string.find(lower, kw, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function clearCooldownAttrs(inst)
+	pcall(function()
+		local attrs = inst:GetAttributes()
+		if typeof(attrs) == "table" then
+			for attrName, attrVal in pairs(attrs) do
+				local low = string.lower(attrName)
+				if string.find(low, "cooldown", 1, true)
+					or string.find(low, "timer", 1, true)
+					or string.find(low, "debounce", 1, true)
+					or string.find(low, "locked", 1, true)
+					or string.find(low, "delay", 1, true)
+				then
+					if typeof(attrVal) == "number" then
+						inst:SetAttribute(attrName, 0)
+					elseif typeof(attrVal) == "boolean" then
+						inst:SetAttribute(attrName, false)
+					end
+				end
+			end
+		end
+	end)
+end
+
+local function applyBypassCasesOpenStep()
+	if LocalPlayer then
+		clearCooldownAttrs(LocalPlayer)
+		local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+		if pGui then
+			for _, guiObj in ipairs(pGui:GetDescendants()) do
+				if (guiObj:IsA("TextButton") or guiObj:IsA("ImageButton")) and matchesCaseName(guiObj.Name) then
+					pcall(function()
+						guiObj.Active = true
+						if guiObj:GetAttribute("Cooldown") ~= nil then
+							guiObj:SetAttribute("Cooldown", 0)
+						end
+						if guiObj:GetAttribute("Locked") ~= nil then
+							guiObj:SetAttribute("Locked", false)
+						end
+					end)
+				end
+			end
+		end
+	end
+
+	local searchRoots = {ReplicatedStorage, workspace}
+	for _, root in ipairs(searchRoots) do
+		if root then
+			for _, desc in ipairs(root:GetDescendants()) do
+				if matchesCaseName(desc.Name) then
+					clearCooldownAttrs(desc)
+					if desc:IsA("RemoteEvent") then
+						pcall(function()
+							desc:FireServer()
+						end)
+					elseif desc:IsA("BindableEvent") then
+						pcall(function()
+							desc:Fire()
+						end)
+					elseif desc:IsA("ProximityPrompt") then
+						pcall(function()
+							desc.HoldDuration = 0
+							desc.Enabled = true
+						end)
+					end
+				end
+			end
 		end
 	end
 end
@@ -1010,6 +1179,7 @@ end
 
 local function addToggle(page, labelText, defaultVal, callback)
 	local state = defaultVal or false
+	local boundKey = nil
 
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, 0, 0, 34)
@@ -1020,7 +1190,7 @@ local function addToggle(page, labelText, defaultVal, callback)
 	addStroke(row, Color3.fromRGB(45, 55, 72), 1, 0.4)
 
 	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(1, -58, 1, 0)
+	lbl.Size = UDim2.new(1, -112, 1, 0)
 	lbl.Position = UDim2.new(0, 10, 0, 0)
 	lbl.BackgroundTransparency = 1
 	lbl.Text = labelText
@@ -1029,6 +1199,20 @@ local function addToggle(page, labelText, defaultVal, callback)
 	lbl.TextSize = 12
 	lbl.TextXAlignment = Enum.TextXAlignment.Left
 	lbl.Parent = row
+
+	local keyBtn = Instance.new("TextButton")
+	keyBtn.Name = labelText .. "KeybindBtn"
+	keyBtn.Size = UDim2.new(0, 52, 0, 20)
+	keyBtn.Position = UDim2.new(1, -106, 0.5, -10)
+	keyBtn.BackgroundColor3 = Color3.fromRGB(36, 42, 58)
+	keyBtn.Text = "Bind"
+	keyBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
+	keyBtn.Font = Enum.Font.GothamBold
+	keyBtn.TextSize = 10
+	keyBtn.AutoButtonColor = false
+	keyBtn.Parent = row
+	addCorner(keyBtn, 5)
+	addStroke(keyBtn, Color3.fromRGB(71, 85, 105), 1, 0.45)
 
 	local pill = Instance.new("TextButton")
 	pill.Size = UDim2.new(0, 40, 0, 20)
@@ -1059,22 +1243,61 @@ local function addToggle(page, labelText, defaultVal, callback)
 		end
 	end
 
+	local function setToggleState(newState, animated)
+		state = newState and true or false
+		refreshVisual(animated ~= false)
+		if callback then
+			callback(state)
+		end
+	end
+
+	local bindSlot = {
+		Label = labelText,
+		Button = keyBtn,
+		SetKey = function(newKey)
+			if boundKey and featureKeybinds[boundKey] and featureKeybinds[boundKey].Button == keyBtn then
+				featureKeybinds[boundKey] = nil
+			end
+			boundKey = newKey
+			if newKey then
+				featureKeybinds[newKey] = {
+					Button = keyBtn,
+					Toggle = function()
+						setToggleState(not state, true)
+					end
+				}
+				keyBtn.Text = newKey.Name
+				keyBtn.TextColor3 = ActiveTheme.Fill
+			else
+				keyBtn.Text = "Bind"
+				keyBtn.TextColor3 = Color3.fromRGB(148, 163, 184)
+			end
+		end,
+		RefreshColor = function()
+			if boundKey then
+				keyBtn.TextColor3 = ActiveTheme.Fill
+			end
+		end
+	}
+
+	keyBtn.MouseButton1Click:Connect(function()
+		playClickSound()
+		listeningForMainKeybind = false
+		activeFeatureBindSlot = bindSlot
+		keyBtn.Text = "..."
+		keyBtn.TextColor3 = Color3.fromRGB(248, 250, 252)
+	end)
+
 	table.insert(themedToggles, {
 		Row = row,
 		Pill = pill,
-		GetState = function()
-			return state
-		end,
-		Refresh = refreshVisual
+		Refresh = refreshVisual,
+		RefreshBind = bindSlot.RefreshColor
 	})
 
 	pill.MouseButton1Click:Connect(function()
 		playClickSound()
-		state = not state
-		refreshVisual(true)
-		if callback then
-			callback(state)
-		end
+		setToggleState(not state, true)
 	end)
 
 	if callback then
@@ -1266,6 +1489,13 @@ addToggle(CombatTab, "Rainbow FOV", false, function(v)
 	RainbowFOV = v
 end)
 
+addToggle(CombatTab, "Bypass Cases Open", false, function(v)
+	BypassCasesOpen = v
+	if BypassCasesOpen then
+		applyBypassCasesOpenStep()
+	end
+end)
+
 addSlider(MoveTab, "SpeedHack", 16, 40, 2, 16, function(v)
 	SpeedValue = v
 end)
@@ -1278,6 +1508,13 @@ addToggle(MoveTab, "Noclip", false, function(v)
 	Noclip = v
 	if not Noclip then
 		restoreCharacterCollisions()
+	end
+end)
+
+addToggle(MoveTab, "Unlimited Money", false, function(v)
+	UnlimitedMoney = v
+	if UnlimitedMoney then
+		applyUnlimitedMoneyStep()
 	end
 end)
 
@@ -1320,6 +1557,8 @@ local function applyPanelSize(newWidth)
 	MainFrame.Position = UDim2.new(0.5, -PanelWidth / 2, 0.5, -newHeight / 2)
 end
 
+local panelColourBtnRef = nil
+
 local function applyPanelTheme(themeObj)
 	ActiveTheme = themeObj
 	MainGrad.Color = ColorSequence.new({
@@ -1335,6 +1574,10 @@ local function applyPanelTheme(themeObj)
 	ContentArea.BackgroundColor3 = ActiveTheme.Surface
 	MoonOuterStroke.Color = ActiveTheme.Fill
 
+	if panelColourBtnRef and panelColourBtnRef.Parent then
+		panelColourBtnRef.Text = ActiveTheme.Name
+	end
+
 	for _, page in pairs(TabPages) do
 		page.ScrollBarImageColor3 = ActiveTheme.Accent
 	end
@@ -1344,6 +1587,9 @@ local function applyPanelTheme(themeObj)
 	for _, item in ipairs(themedToggles) do
 		item.Row.BackgroundColor3 = ActiveTheme.Row
 		item.Refresh(false)
+		if item.RefreshBind then
+			item.RefreshBind()
+		end
 	end
 	for _, item in ipairs(themedSliders) do
 		item.Frame.BackgroundColor3 = ActiveTheme.Row
@@ -1356,10 +1602,16 @@ local function applyPanelTheme(themeObj)
 	end
 end
 
+local function stepPanelTheme()
+	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
+	applyPanelTheme(PanelThemes[currentThemeIndex])
+end
+
 local keybindBtnRef = nil
 
-keybindBtnRef = addButton(SettingsTab, "Keybind", ToggleKeybind.Name, function(btn)
-	listeningForKeybind = true
+keybindBtnRef = addButton(SettingsTab, "UI Keybind", ToggleKeybind.Name, function(btn)
+	activeFeatureBindSlot = nil
+	listeningForMainKeybind = true
 	btn.Text = "Press key..."
 end)
 
@@ -1370,11 +1622,12 @@ addButton(SettingsTab, "Click Sound", ActiveClickSound.Name, function(btn)
 	playClickSound()
 end)
 
-addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, function(btn)
-	currentThemeIndex = (currentThemeIndex % #PanelThemes) + 1
-	local nextTheme = PanelThemes[currentThemeIndex]
-	applyPanelTheme(nextTheme)
-	btn.Text = nextTheme.Name
+panelColourBtnRef = addButton(SettingsTab, "Panel Colour", ActiveTheme.Name, function()
+	stepPanelTheme()
+end)
+
+addToggle(SettingsTab, "Auto Colour", false, function(v)
+	AutoPanelColour = v
 end)
 
 addButton(SettingsTab, "Server Hop", "Join Server", function(btn)
@@ -1468,8 +1721,20 @@ end
 
 UIS.InputBegan:Connect(function(input, gameProcessed)
 	if input.UserInputType == Enum.UserInputType.Keyboard then
-		if listeningForKeybind then
-			listeningForKeybind = false
+		if activeFeatureBindSlot then
+			local slot = activeFeatureBindSlot
+			activeFeatureBindSlot = nil
+			if input.KeyCode == Enum.KeyCode.Escape then
+				slot.SetKey(nil)
+			elseif input.KeyCode ~= Enum.KeyCode.Unknown then
+				slot.SetKey(input.KeyCode)
+			end
+			playClickSound()
+			return
+		end
+
+		if listeningForMainKeybind then
+			listeningForMainKeybind = false
 			if input.KeyCode ~= Enum.KeyCode.Unknown and input.KeyCode ~= Enum.KeyCode.Escape then
 				ToggleKeybind = input.KeyCode
 			end
@@ -1480,9 +1745,18 @@ UIS.InputBegan:Connect(function(input, gameProcessed)
 			return
 		end
 
-		if not gameProcessed and input.KeyCode == ToggleKeybind then
-			playClickSound()
-			setWindowVisible(not MainFrame.Visible)
+		if not gameProcessed then
+			if input.KeyCode == ToggleKeybind then
+				playClickSound()
+				setWindowVisible(not MainFrame.Visible)
+				return
+			end
+
+			local bindEntry = featureKeybinds[input.KeyCode]
+			if bindEntry and bindEntry.Toggle then
+				playClickSound()
+				bindEntry.Toggle()
+			end
 		end
 	end
 end)
@@ -1531,6 +1805,8 @@ do
 	local frameCount = 0
 	local statsElapsed = 0
 	local noclipElapsed = 0
+	local utilityElapsed = 0
+	local autoThemeElapsed = 0
 
 	RunService.RenderStepped:Connect(function(dt)
 		Camera = workspace.CurrentCamera
@@ -1548,6 +1824,31 @@ do
 			StatsLabel.Text = string.format("FPS: %d | Ping: %dms | Players: %d", fps, ping, activePlayers)
 			frameCount = 0
 			statsElapsed = 0
+		end
+
+		-- Automatic Panel Colour Cycling
+		if AutoPanelColour then
+			autoThemeElapsed += dt
+			if autoThemeElapsed >= 1.6 then
+				autoThemeElapsed = 0
+				stepPanelTheme()
+			end
+		else
+			autoThemeElapsed = 0
+		end
+
+		-- Throttled Unlimited Money & Bypass Cases Open
+		if UnlimitedMoney or BypassCasesOpen then
+			utilityElapsed += dt
+			if utilityElapsed >= 0.25 then
+				utilityElapsed = 0
+				if UnlimitedMoney then
+					applyUnlimitedMoneyStep()
+				end
+				if BypassCasesOpen then
+					applyBypassCasesOpenStep()
+				end
+			end
 		end
 
 		-- Movement & Throttled Noclip
@@ -1600,9 +1901,9 @@ do
 				Circle.Color = col
 				GlowCircle.Color = col
 			else
-				local red = Color3.fromRGB(255, 0, 0)
-				Circle.Color = red
-				GlowCircle.Color = red
+				local fovCol = ActiveTheme.Accent
+				Circle.Color = fovCol
+				GlowCircle.Color = fovCol
 			end
 		end
 
